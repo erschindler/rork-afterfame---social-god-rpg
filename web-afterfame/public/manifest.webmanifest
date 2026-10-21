@@ -1,0 +1,10 @@
+{
+  "name": "AFTERFAME",
+  "short_name": "AFTERFAME",
+  "description": "A social network simulation RPG.",
+  "start_url": "/worlds",
+  "display": "standalone",
+  "background_color": "#0A0C0B",
+  "theme_color": "#0A0C0B",
+  "icons": [{ "src": "/icon.png", "sizes": "512x512", "type": "image/png" }]
+}

@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  AFTERFAME design system. All colors are HSL channels.
+  Dark is the default theme; .light is the optional theme.
+*/
+@layer base {
+  :root,
+  .dark {
+    --background: 150 9% 4%;
+    --foreground: 93 26% 92%;
+    --surface: 140 8% 7%;
+    --card: 135 8% 9%;
+    --card-foreground: 93 26% 92%;
+    --elevated: 132 8% 12%;
+    --popover: 132 8% 11%;
+    --popover-foreground: 93 26% 92%;
+
+    --primary: 74 90% 58%;
+    --primary-foreground: 150 9% 6%;
+    --brand: 74 90% 58%;
+
+    --secondary: 132 8% 14%;
+    --secondary-foreground: 93 26% 92%;
+    --muted: 132 8% 14%;
+    --muted-foreground: 115 5% 57%;
+    --accent: 132 8% 14%;
+    --accent-foreground: 93 26% 92%;
+
+    --destructive: 4 100% 65%;
+    --destructive-foreground: 150 9% 6%;
+
+    --border: 130 8% 16%;
+    --input: 130 8% 18%;
+    --ring: 74 90% 58%;
+    --radius: 0.875rem;
+
+    --fame: 74 90% 58%;
+    --admiration: 171 50% 57%;
+    --infamy: 4 100% 65%;
+    --credibility: 207 100% 74%;
+    --influence: 255 100% 79%;
+    --controversy: 29 100% 63%;
+
+    --sidebar-background: 150 9% 4%;
+    --sidebar-foreground: 93 26% 92%;
+    --sidebar-primary: 74 90% 58%;
+    --sidebar-primary-foreground: 150 9% 6%;
+    --sidebar-accent: 132 8% 12%;
+    --sidebar-accent-foreground: 93 26% 92%;
+    --sidebar-border: 130 8% 16%;
+    --sidebar-ring: 74 90% 58%;
+    color-scheme: dark;
+  }
+
+  .light {
+    --background: 70 23% 95%;
+    --foreground: 120 8% 8%;
+    --surface: 70 20% 97%;
+    --card: 0 0% 100%;
+    --card-foreground: 120 8% 8%;
+    --elevated: 70 18% 93%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 120 8% 8%;
+    --primary: 74 90% 58%;
+    --primary-foreground: 120 8% 8%;
+    --brand: 81 100% 24%;
+    --secondary: 70 18% 91%;
+    --secondary-foreground: 120 8% 8%;
+    --muted: 70 18% 91%;
+    --muted-foreground: 113 5% 38%;
+    --accent: 70 18% 91%;
+    --accent-foreground: 120 8% 8%;
+    --destructive: 4 80% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 82 16% 87%;
+    --input: 82 16% 84%;
+    --ring: 81 100% 30%;
+    --fame: 81 100% 30%;
+    --admiration: 171 60% 34%;
+    --infamy: 4 80% 50%;
+    --credibility: 207 80% 42%;
+    --influence: 255 60% 55%;
+    --controversy: 29 95% 45%;
+    --sidebar-background: 70 23% 95%;
+    --sidebar-foreground: 120 8% 8%;
+    --sidebar-primary: 74 90% 58%;
+    --sidebar-primary-foreground: 120 8% 8%;
+    --sidebar-accent: 70 18% 90%;
+    --sidebar-accent-foreground: 120 8% 8%;
+    --sidebar-border: 82 16% 87%;
+    --sidebar-ring: 81 100% 30%;
+    color-scheme: light;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.35);
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .font-display {
+    font-family: "Archivo", "Schibsted Grotesk", ui-sans-serif, sans-serif;
+    font-stretch: 112%;
+  }
+
+  .panel {
+    @apply rounded-2xl border border-border bg-card;
+  }
+
+  .hairline {
+    @apply border-border/70;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  .grain {
+    background-image: radial-gradient(hsl(var(--foreground) / 0.035) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
