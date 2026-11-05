@@ -12,6 +12,8 @@ import { clamp, Rng } from "./rng.ts";
 import { vocabFor } from "./vocab.ts";
 import type { Traits } from "./population.ts";
 import type { ReplyStance, Voice } from "./text.ts";
+import { respond } from "./bank/respond.ts";
+import type { UsageLedger } from "./bank/usage.ts";
 
 export type DialogueAct =
   | "agree" | "agree_extend" | "partial_agree" | "counter" | "rebut" | "concede" | "escalate" | "clarify"
@@ -47,6 +49,12 @@ export interface DialogueContext {
   multiParty?: boolean;
   /** Template keys already used in this conversation (avoid repeats). */
   usedKeys?: string[];
+  /** Speaker's side toward prevAuthor (selects side-tagged bank entries). */
+  side?: Side;
+  /** Conversation heat 0..1. */
+  heat?: number;
+  /** World usage ledger: caps how often a bank entry is reused. */
+  usage?: UsageLedger | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -573,17 +581,36 @@ export interface DialogueLine {
 
 /** Generate the text for a dialogue act answering ctx.prevContent. */
 export function generateDialogue(act: DialogueAct, ctx: DialogueContext, voice: Voice, rng: Rng): DialogueLine {
-  const pool = T[act];
   const used = new Set(ctx.usedKeys ?? []);
-  const fresh = pool.map((_, i) => i).filter((i) => !used.has(`${act}:${i}`));
-  const idx = rng.pick(fresh.length ? fresh : pool.map((_, i) => i));
-  let raw = fillDialogue(pool[idx], ctx, rng);
-  if (act === "tag_friend" && !ctx.friend) raw = fillDialogue(T.ask_followup[0], ctx, rng);
+  const effAct: DialogueAct = act === "tag_friend" && !ctx.friend ? "ask_followup" : act;
+  // 1) Response bank (triggered on the message being answered), 2) the classic
+  // templates while fresh ones remain, 3) on-the-fly composition.
+  const bankCtx = { topic: ctx.topic, text: ctx.prevContent, prev: ctx.prevAuthor, op: ctx.opAuthor, friend: ctx.friend, others: ctx.others };
+  const req = { act: effAct, ctx: bankCtx, style: voice.style, side: ctx.side, heat: ctx.heat, usage: ctx.usage };
+  const fromBank = rng.chance(0.85) ? respond(req, rng.fork("bank"), { allowCompose: false }) : null;
+  let raw: string;
+  let key: string;
+  if (fromBank && !used.has(fromBank.id)) {
+    raw = fromBank.text;
+    key = fromBank.id;
+  } else {
+    const pool = T[effAct];
+    const fresh = pool.map((_, i) => i).filter((i) => !used.has(`${effAct}:${i}`));
+    if (fresh.length) {
+      const idx = rng.pick(fresh);
+      raw = fillDialogue(pool[idx], ctx, rng);
+      key = `${effAct}:${idx}`;
+    } else {
+      const c = respond(req, rng.fork("compose"))!;
+      raw = c.text;
+      key = c.id;
+    }
+  }
   let text = humanize(raw, voice, rng);
   // In crowded threads people address who they're answering.
   const addressed = text.includes(`@${ctx.prevAuthor}`);
   if (ctx.multiParty && !addressed && !["tag_friend", "mediator", "laugh"].includes(act) && rng.chance(0.45)) text = `@${ctx.prevAuthor} ${text}`;
-  return { text: text.slice(0, 280), key: `${act}:${idx}` };
+  return { text: text.slice(0, 280), key };
 }
 
 // ---------------------------------------------------------------------------

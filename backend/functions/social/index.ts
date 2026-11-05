@@ -2,7 +2,7 @@
 import { adminClient, check, HttpError, requireUser, runInBackground, serve, str, uuid } from "../_shared/http.ts";
 import { loadContext } from "../_shared/game/store.ts";
 import { createPlayerPost, createThread, respondToCollab, respondToEvent, setCommunity, setFilter, setFollow, setInteraction, validatePoll, votePoll } from "../_shared/game/actions.ts";
-import { respondDmOffer, sendDm } from "../_shared/game/dm.ts";
+import { respondDmOffer, sendDm, submitLocalAi } from "../_shared/game/dm.ts";
 import { listReports } from "../_shared/game/moderation.ts";
 import { scheduleJob } from "../_shared/game/distribute.ts";
 import { LIMITS } from "../_shared/sim/config.ts";
@@ -48,9 +48,11 @@ serve("social", async (req, body) => {
     case "vote":
       return await votePoll(db, world, player, uuid(body.postId, "Post"), Number(body.option));
     case "dm_send": {
-      const res = await sendDm(db, world, player, uuid(body.accountId, "Account"), String(body.content ?? ""));
+      const res = await sendDm(db, world, player, uuid(body.accountId, "Account"), String(body.content ?? ""), { localAi: body.localAi === true });
       return res;
     }
+    case "dm_ai_submit":
+      return await submitLocalAi(db, world, player, uuid(body.taskId, "Task"), body.messages);
     case "dm_offer":
       return await respondDmOffer(db, world, player, uuid(body.messageId, "Message"), body.accept === true);
     case "reports":

@@ -11,6 +11,7 @@ import { scheduleJob, startPlayerFeud } from "./distribute.ts";
 import { evaluateAchievements } from "./achievements.ts";
 import { progressChallenge } from "./challenges.ts";
 import { voiceOf } from "./util.ts";
+import { ensureLedger, flushLedgers, ledgerFor } from "./usage.ts";
 import { actFromSignals, chooseAct, generateDialogue, nextHeat, type Side } from "../sim/dialogue.ts";
 import { isClosed, type Poll } from "../sim/polls.ts";
 import { scheduleConversation } from "./conversation.ts";
@@ -177,12 +178,13 @@ export async function simReplyBack(db: Db, world: WorldRow, payload: { sim_id: s
   const act = chooseAct(prevAct, side, sim.personality_traits, heat, rng, { prevIsQuestion: post.content.includes("?"), turn: 1 });
   const root = post.root_post_id ? check(await db.from("posts").select("id, author_type, author_simulated_account_id, author_player_id").eq("id", post.root_post_id).maybeSingle(), "rb_root") as { id: string; author_simulated_account_id: string | null } | null : null;
   const opName = root?.author_simulated_account_id === sim.id ? sim.username : player.username;
-  const line = generateDialogue(act, { topic: post.topic_id ?? sim.interests[0], prevContent: post.content, prevAuthor: player.username, opAuthor: opName }, voiceOf(sim), rng);
+  const line = generateDialogue(act, { topic: post.topic_id ?? sim.interests[0], prevContent: post.content, prevAuthor: player.username, opAuthor: opName, side, heat, usage: await ensureLedger(db, world.id) }, voiceOf(sim), rng);
   const reply = check(await db.from("posts").insert({
     world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "reply", parent_post_id: post.id, root_post_id: post.root_post_id ?? post.id,
     content: line.text, topic_id: post.topic_id, stance: act, sim_tick: world.current_tick, like_count: rng.int(0, 6),
   }).select("id").single(), "insert_reply_back") as { id: string };
   check(await db.rpc("adjust_post_counts", { p: post.id, d_like: 0, d_reply: 1, d_repost: 0, d_quote: 0, d_view: 0 }), "inc_reply_back");
+  await flushLedgers(db, world.id);
   await notify(db, world.id, player.user_id, { type: "reply", title: `@${sim.username} replied to you`, body: line.text, sourceType: "post", sourceId: post.root_post_id ?? post.id, actorId: sim.id, priority: 2 });
   // Onlookers sometimes join the exchange.
   if (act !== "exit" && rng.chance(0.4)) {

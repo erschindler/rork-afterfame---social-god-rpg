@@ -14,6 +14,7 @@ import { SIM_COLUMNS, type PostRow, type SimRow, type WorldRow } from "./types.t
 import { notify, updateRelationship } from "./store.ts";
 import { scheduleJob } from "./distribute.ts";
 import { voiceOf } from "./util.ts";
+import { ensureLedger, flushLedgers, ledgerFor } from "./usage.ts";
 
 export interface ConvParticipant extends Participant {
   player?: boolean;
@@ -67,7 +68,7 @@ export async function startTickConversations(db: Db, world: WorldRow, slice: Sim
     const team = pickTeam(speaker.personality_traits, 0, r);
     const side = sideBetween(team, "pro");
     const act = chooseAct(null, side, speaker.personality_traits, 0.45, r, { prevIsQuestion: post.content.trim().endsWith("?") });
-    const line = generateDialogue(act, { topic: post.topic_id ?? speaker.interests[0], prevContent: post.content, prevAuthor: op.username, opAuthor: op.username }, voiceOf(speaker), r);
+    const line = generateDialogue(act, { topic: post.topic_id ?? speaker.interests[0], prevContent: post.content, prevAuthor: op.username, opAuthor: op.username, side, heat: 0.45, usage: ledgerFor(world.id) }, voiceOf(speaker), r);
     const reply = check(await db.from("posts").insert({
       world_id: world.id, author_type: "sim", author_simulated_account_id: speaker.id, post_type: "reply", parent_post_id: post.id, root_post_id: post.id,
       content: line.text, topic_id: post.topic_id, stance: act, sim_tick: world.current_tick, like_count: r.int(0, 8),
@@ -175,7 +176,7 @@ export async function runConverse(db: Db, world: WorldRow, p: ConversePayload): 
   const line = generateDialogue(act, {
     topic: root.topic_id ?? speaker.interests[0], prevContent: replyTo.content, prevAuthor: targetName, opAuthor: opName, others,
     friend: act === "tag_friend" ? friend?.username : act === "friend_arrive" ? prevSpeaker?.username : undefined,
-    multiParty: participants.length > 2, usedKeys: p.used,
+    multiParty: participants.length > 2, usedKeys: p.used, side, heat: p.heat, usage: await ensureLedger(db, world.id),
   }, voiceOf(speaker), rng);
 
   const likeBase = Math.round(p.heat * 12 + (act === "escalate" || act === "receipts" ? 6 : 0));

@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Check, Dices, Loader2, Lock, Sparkles, Store, Target, User, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Loader2, Lock, Sparkles, Store, Target, User, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Avatar } from "@/components/Avatar";
+import { AvatarPicker } from "@/components/AvatarPicker";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -184,12 +185,7 @@ export default function CreateWorld() {
               <h1 className="text-3xl font-bold tracking-tight">Your public persona</h1>
               <p className="mt-1 text-muted-foreground">No class, no alignment. Who you become depends on what you do.</p>
             </div>
-            <div className="flex items-center gap-4">
-              <Avatar seed={avatar} size={88} />
-              <Button type="button" variant="secondary" onClick={() => setAvatar(`me-${Math.random().toString(36).slice(2, 8)}`)}>
-                <Dices /> Shuffle avatar
-              </Button>
-            </div>
+            <AvatarPicker value={avatar} onChange={setAvatar} size={88} />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="dn">Display name</Label>

@@ -17,11 +17,27 @@ export interface PersonaInput {
   nicheTopic?: string | null;
 }
 
-export function validatePersona(raw: Record<string, unknown>): PersonaInput {
+/**
+ * Avatars are either a generated reference ("style:seed" or a bare seed) or a
+ * photo the player uploaded to the public `avatars` bucket under their own id.
+ */
+export function validateAvatar(raw: unknown, userId: string, fallback: string): string {
+  const v = String(raw ?? "").trim();
+  if (!v) return fallback;
+  if (/^https:\/\//.test(v)) {
+    const base = `${(Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "")}/storage/v1/object/public/avatars/${userId}/`;
+    if (v.length <= 400 && v.startsWith(base) && /^[\w.\-]+(\?v=\d+)?$/.test(v.slice(base.length))) return v;
+    throw new HttpError(400, "That avatar photo can't be used. Upload it again.", "invalid_input");
+  }
+  if (!/^[\w.:\- ]{1,80}$/.test(v)) throw new HttpError(400, "Invalid avatar.", "invalid_input");
+  return v;
+}
+
+export function validatePersona(raw: Record<string, unknown>, userId = ""): PersonaInput {
   const displayName = String(raw.displayName ?? "").trim();
   const username = String(raw.username ?? "").trim().toLowerCase().replace(/^@/, "");
   const bio = String(raw.bio ?? "").trim();
-  const avatar = String(raw.avatar ?? "").trim().slice(0, 80) || username;
+  const avatar = validateAvatar(raw.avatar, userId, username);
   const interests = Array.isArray(raw.interests) ? raw.interests.filter((i): i is string => typeof i === "string" && ALL_TOPICS.includes(i)).slice(0, 6) : [];
   const sc = String(raw.startingCondition ?? "ordinary");
   if (displayName.length < 1 || displayName.length > 50) throw new HttpError(400, "Display name must be 1–50 characters.", "invalid_input");

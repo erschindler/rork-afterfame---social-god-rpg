@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Avatar } from "@/components/Avatar";
+import { AdsPanel, LocalAiPanel, NotificationsPanel } from "@/components/DevicePanels";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -257,6 +258,9 @@ export default function Settings() {
           <Switch checked={settings.data?.mode === "model"} disabled={!settings.data?.modelAvailable || !isOwner || busy} onCheckedChange={(on) => save({ textMode: on ? "model" : "rules" })} />
         </label>
       </Row>
+      <LocalAiPanel />
+      <NotificationsPanel />
+      <AdsPanel worldId={worldId} />
       <Row title="Appearance">
         <Button variant="secondary" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
           {theme === "light" ? <Moon /> : <Sun />} {theme === "light" ? "Use dark mode" : "Use light mode"}

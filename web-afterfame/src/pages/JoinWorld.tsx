@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, Dices, Loader2, Store, Target, User, Users } from "lucide-react";
+import { ArrowRight, Check, Loader2, Store, Target, User, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Avatar } from "@/components/Avatar";
+import { AvatarPicker } from "@/components/AvatarPicker";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -146,12 +147,7 @@ export default function JoinWorld() {
                     <h2 className="text-2xl font-bold tracking-tight">Your persona</h2>
                     <p className="mt-1 text-sm text-muted-foreground">Everyone starts as a nobody, including you. The other players are real; everyone else is a labeled SIM.</p>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <Avatar seed={avatar} size={72} />
-                    <Button type="button" variant="secondary" onClick={() => setAvatar(`me-${Math.random().toString(36).slice(2, 8)}`)}>
-                      <Dices /> Shuffle avatar
-                    </Button>
-                  </div>
+                  <AvatarPicker value={avatar} onChange={setAvatar} size={72} />
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label htmlFor="dn">Display name</Label>

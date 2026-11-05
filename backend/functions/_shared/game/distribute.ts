@@ -15,6 +15,7 @@ import { COMMUNITY_DEFS } from "../sim/communities.ts";
 import { SIM_COLUMNS, type PlayerRow, type PostRow, type SimRow, type WorldRow } from "./types.ts";
 import { applyReputation, createEvent, notify, population, refreshPlayerCounts, remember, updateRelationship } from "./store.ts";
 import { voiceOf } from "./util.ts";
+import { ensureLedger, flushLedgers, ledgerFor } from "./usage.ts";
 import { evaluateAchievements } from "./achievements.ts";
 import { progressChallenge } from "./challenges.ts";
 import { actFromStance, generateDialogue } from "../sim/dialogue.ts";
@@ -183,8 +184,8 @@ export async function processDistribution(db: Db, world: WorldRow, postId: strin
     const rr = rng.fork(`reply${sim.id}`);
     const act = actFromStance(stance);
     let content = act && !(KEEP_CLASSIC.has(stance) && rr.chance(0.7)) && !memMap.get(sim.id)?.last
-      ? generateDialogue(act, { topic: signals.topic, prevContent: post.content, prevAuthor: player.username, opAuthor: player.username }, voiceOf(sim), rr).text
-      : generateReply(stance, { topic: signals.topic, hook, memory: memMap.get(sim.id)?.last ? "that earlier thread" : undefined }, voiceOf(sim), rr);
+      ? generateDialogue(act, { topic: signals.topic, prevContent: post.content, prevAuthor: player.username, opAuthor: player.username, side: SUPPORTIVE.has(stance) ? "ally" : CRITICAL.has(stance) ? "opponent" : "neutral", heat: CRITICAL.has(stance) ? 0.55 : 0.35, usage: ledgerFor(world.id) }, voiceOf(sim), rr).text
+      : generateReply(stance, { topic: signals.topic, hook, memory: memMap.get(sim.id)?.last ? "that earlier thread" : undefined, prevContent: post.content, prevAuthor: player.username, usage: ledgerFor(world.id) }, voiceOf(sim), rr);
     content = await rephrase(modelCfg, content, `${sim.display_name}, ${sim.archetype}, ${sim.communication_style} tone`, `Replying (${stance}) to: ${post.content}`);
     replyRows.push({
       world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "reply", parent_post_id: post.id, root_post_id: post.root_post_id ?? post.id,

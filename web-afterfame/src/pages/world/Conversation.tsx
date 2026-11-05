@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeDollarSign, Check, Loader2, SendHorizontal, X } from "lucide-react";
+import { BadgeDollarSign, Check, Cpu, Loader2, SendHorizontal, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -14,11 +14,27 @@ import { compact } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import type { DmMessage, DmThreadResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useLocalAi } from "@/providers/LocalAiProvider";
 import { useWorld } from "@/providers/WorldProvider";
 
 import { TypingDots } from "./Messages";
 
 const MAX = 500;
+
+/** Quick replies tuned to what the SIM just said. */
+function smartReplies(last: string | undefined, rel: number): string[] {
+  if (!last) return ["hey!", "love your posts", "what are you working on?"];
+  const t = last.toLowerCase();
+  if (/congrat|proud|huge|deserve/.test(t)) return ["thank you!!", "still can't believe it", "means a lot"];
+  if (/sorry|rough|hard/.test(t)) return ["thanks, I'm okay", "it's been a week", "appreciate you"];
+  if (/what do you want|surprised you messaged|\.\.\.hi/.test(t) || rel <= -15) return ["just wanted to clear the air", "no hard feelings?", "you're a clown"];
+  if (/collab|work together|project/.test(t)) return ["I'm in", "what did you have in mind?", "maybe later"];
+  if (t.trim().endsWith("?")) return ["yeah, honestly", "not really lol", "what about you?"];
+  if (/lol|lmao|haha/.test(t)) return ["lmao", "you're so real for that", "anyway, what's new?"];
+  return ["haha true", "tell me more", "what got you into this?"];
+}
+
+const draftKey = (worldId: string, key: string) => `af.draft.dm.${worldId}.${key}`;
 
 function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -90,7 +106,17 @@ export default function Conversation() {
   const queryClient = useQueryClient();
   const simParam = key.startsWith("@") ? key.slice(1) : null;
   const threadParam = simParam ? null : key;
-  const [text, setText] = useState<string>("");
+  const [text, setTextRaw] = useState<string>(() => localStorage.getItem(draftKey(worldId, key)) ?? "");
+  const setText = (v: string) => {
+    setTextRaw(v);
+    if (v) localStorage.setItem(draftKey(worldId, key), v);
+    else localStorage.removeItem(draftKey(worldId, key));
+  };
+  const localAi = useLocalAi();
+  const [aiWriting, setAiWriting] = useState<boolean>(false);
+  const handledTask = useRef<string | null>(null);
+  const aiRef = useRef(localAi);
+  aiRef.current = localAi;
   const [pending, setPending] = useState<DmMessage[]>([]);
   const [now, setNow] = useState<number>(Date.now());
   const scroller = useRef<HTMLDivElement>(null);
@@ -143,8 +169,9 @@ export default function Conversation() {
 
   const messages = useMemo(() => {
     const server = data?.messages ?? [];
-    const ids = new Set(server.map((m) => m.content + m.sender_type));
-    return [...server, ...pending.filter((p) => !ids.has(p.content + p.sender_type))];
+    // A pending bubble is replaced once the server has the same text from the player, sent around the same time.
+    const confirmed = (p: DmMessage) => server.some((m) => m.sender_type === "player" && m.content === p.content && Date.parse(m.created_at) >= Date.parse(p.created_at) - 15_000);
+    return [...server, ...pending.filter((p) => !confirmed(p))];
   }, [data?.messages, pending]);
 
   useLayoutEffect(() => {
@@ -164,7 +191,7 @@ export default function Conversation() {
     setText("");
     stick.current = true;
     try {
-      const res = await callFn<{ threadId: string }>("social", { action: "dm_send", worldId, accountId: data.sim.id, content });
+      const res = await callFn<{ threadId: string }>("social", { action: "dm_send", worldId, accountId: data.sim.id, content, localAi: localAi.ready });
       if (!threadId) navigate(`${base}/messages/${res.threadId}`, { replace: true });
       await queryClient.invalidateQueries({ queryKey: ["dm", worldId] });
       setPending((p) => p.filter((x) => x.id !== temp.id));
@@ -187,14 +214,43 @@ export default function Conversation() {
     }
   };
 
+  // On-device AI: the server left a draft for this browser to rewrite. Use it, or hand the draft back right away.
+  const task = data?.localTask ?? null;
+  useEffect(() => {
+    if (!task || handledTask.current === task.id) return;
+    handledTask.current = task.id;
+    (async () => {
+      let messages: string[] = [];
+      const ai = aiRef.current;
+      if (ai.ready) {
+        setAiWriting(true);
+        try {
+          messages = await ai.writeDm(task.prompt, task.draft);
+        } catch (err) {
+          console.warn("local_ai_write", err);
+        }
+      }
+      try {
+        await callFn("social", { action: "dm_ai_submit", worldId, taskId: task.id, messages });
+      } catch {
+        // Already delivered (another tab, or the server fallback).
+      }
+      setAiWriting(false);
+      queryClient.invalidateQueries({ queryKey: ["dm", worldId] });
+    })();
+  }, [task, worldId, queryClient]);
+
   const sim = data?.sim;
   const rel = data?.relationship;
+  const relLabel = rel?.relationship_status ? String(rel.relationship_status).replace(/_/g, " ") : "";
+  const lastSim = [...messages].reverse().find((m) => m.sender_type === "sim" && m.kind === "text");
+  const chips = useMemo(() => smartReplies(lastSim?.content, rel?.relationship_score ?? 0), [lastSim?.content, rel?.relationship_score]);
 
   return (
     <div className="flex h-[calc(100dvh-56px-64px-env(safe-area-inset-bottom))] flex-col lg:h-dvh">
       <PageHeader
         title={sim?.display_name ?? "Conversation"}
-        subtitle={typing ? "typing…" : sim ? `@${sim.username}${rel ? ` · ${rel.relationship_status.replace(/_/g, " ")}` : ""}` : undefined}
+        subtitle={typing || aiWriting ? "typing…" : sim ? `@${sim.username}${relLabel ? ` · ${relLabel}` : ""}` : undefined}
         back={`${base}/messages`}
         right={sim ? <Link to={`${base}/u/${sim.username}`} aria-label={`${sim.display_name}'s profile`}><Avatar seed={sim.avatar_reference} size={36} /></Link> : null}
         className="shrink-0"
@@ -254,6 +310,11 @@ export default function Conversation() {
                     )}
                   >
                     {m.content}
+                    {m.meta?.local_ai === true && (
+                      <span className="mt-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title="Written on your device by the local model">
+                        <Cpu className="h-3 w-3" /> On-device
+                      </span>
+                    )}
                   </div>
                 )}
                 {!groupedWithNext && m.kind === "text" && (
@@ -264,7 +325,7 @@ export default function Conversation() {
               </li>
             );
           })}
-          {typing && (
+          {(typing || aiWriting) && (
             <li className="self-start rounded-[20px] bg-elevated px-4 py-3.5 text-muted-foreground animate-rise-in" aria-live="polite">
               <TypingDots />
             </li>
@@ -278,6 +339,23 @@ export default function Conversation() {
         }}
         className="shrink-0 border-t border-border bg-background/95 px-3 py-3 backdrop-blur-md"
       >
+        {data && !text && !lastIsPlayer && (
+          <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]" aria-label="Quick replies">
+            {chips.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => {
+                  setText(c);
+                  input.current?.focus();
+                }}
+                className="shrink-0 rounded-full border border-border px-3 py-1.5 text-[13px] font-medium text-foreground/90 transition-colors hover:border-brand/60 hover:text-brand active:scale-95"
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-3xl bg-elevated px-4 py-1.5 focus-within:ring-1 focus-within:ring-brand/60">
           <textarea
             ref={input}

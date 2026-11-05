@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApiError } from "@/lib/api";
 import { AuthProvider } from "@/providers/AuthProvider";
+import { LocalAiProvider } from "@/providers/LocalAiProvider";
 
 import Auth from "./pages/Auth";
 import Landing from "./pages/Landing";
@@ -17,6 +18,7 @@ import NotFound from "./pages/NotFound";
 const Worlds = lazy(() => import("./pages/Worlds"));
 const CreateWorld = lazy(() => import("./pages/CreateWorld"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const FakeSite = lazy(() => import("./pages/FakeSite"));
 const Home = lazy(() => import("./pages/world/Home"));
 const Discover = lazy(() => import("./pages/world/Discover"));
 const Notifications = lazy(() => import("./pages/world/Notifications"));
@@ -50,6 +52,7 @@ const App = () => (
     <ThemeProvider attribute="class" defaultTheme="dark" themes={["dark", "light"]} enableSystem={false}>
       <TooltipProvider delayDuration={250}>
         <AuthProvider>
+          <LocalAiProvider>
           <Toaster position="bottom-center" />
           <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Suspense fallback={<Fallback />}>
@@ -60,6 +63,8 @@ const App = () => (
                 <Route path="/worlds" element={<RequireAuth><Worlds /></RequireAuth>} />
                 <Route path="/worlds/new" element={<RequireAuth><CreateWorld /></RequireAuth>} />
                 <Route path="/join/:code" element={<RequireAuth><JoinWorld /></RequireAuth>} />
+                <Route path="/w/:worldId/site" element={<FakeSite />} />
+                <Route path="/w/:worldId/site/:brandSlug" element={<FakeSite />} />
                 <Route path="/w/:worldId" element={<RequireAuth><WorldLayout /></RequireAuth>}>
                   <Route index element={<Suspense fallback={<Fallback />}><Home /></Suspense>} />
                   <Route path="discover" element={<Suspense fallback={<Fallback />}><Discover /></Suspense>} />
@@ -82,6 +87,7 @@ const App = () => (
               </Routes>
             </Suspense>
           </BrowserRouter>
+          </LocalAiProvider>
         </AuthProvider>
       </TooltipProvider>
     </ThemeProvider>

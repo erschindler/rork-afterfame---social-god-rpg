@@ -1,7 +1,9 @@
 import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
 import { Link, Outlet } from "react-router-dom";
 
 import { ComposerDialog } from "@/components/Composer";
+import { KeyboardShortcuts } from "@/components/KeyboardShortcuts";
 import { LeftNav } from "@/components/layout/LeftNav";
 import { MobileHeader, MobileTabBar } from "@/components/layout/MobileChrome";
 import { RightRail, SearchBox } from "@/components/layout/RightRail";
@@ -61,8 +63,23 @@ function Shell() {
       <MobileTabBar />
       <ComposerDialog />
       <OfflineSummaryDialog />
+      <KeyboardShortcuts />
+      <TabTitle />
     </div>
   );
+}
+
+/** Shows unread alerts and DMs in the browser tab title. */
+function TabTitle() {
+  const { unread, unreadDms, world } = useWorld();
+  useEffect(() => {
+    const n = unread + unreadDms;
+    document.title = `${n > 0 ? `(${n > 99 ? "99+" : n}) ` : ""}${world?.name ?? "AFTERFAME"} · AFTERFAME`;
+    return () => {
+      document.title = "AFTERFAME";
+    };
+  }, [unread, unreadDms, world?.name]);
+  return null;
 }
 
 export function WorldLayout() {

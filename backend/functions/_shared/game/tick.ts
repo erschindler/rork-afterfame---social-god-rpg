@@ -16,8 +16,9 @@ import { simReplyBack } from "./actions.ts";
 import { evaluateAchievements } from "./achievements.ts";
 import { ensureChallenges } from "./challenges.ts";
 import { abstractEngagement, voiceOf } from "./util.ts";
+import { ensureLedger, flushLedgers, ledgerFor } from "./usage.ts";
 import { type ConversePayload, runConverse, startTickConversations } from "./conversation.ts";
-import { processDmReply, simInitiatedDms } from "./dm.ts";
+import { localAiFallback, processDmReply, simInitiatedDms } from "./dm.ts";
 import { reviewReport } from "./moderation.ts";
 import { distributeVotes, optionWeights, type Poll, simPoll } from "../sim/polls.ts";
 
@@ -65,6 +66,7 @@ export async function syncWorld(db: Db, world: WorldRow, opts: { maxTicks?: numb
 }
 
 export async function processDueJobs(db: Db, world: WorldRow): Promise<number> {
+  await ensureLedger(db, world.id);
   const jobs = check(await db.rpc("claim_due_jobs", { w: world.id, lim: LIMITS.jobsPerSync }), "claim_jobs") as { id: string; job_type: string; payload: Record<string, unknown>; attempts: number }[];
   let done = 0;
   for (const job of jobs) {
@@ -73,6 +75,7 @@ export async function processDueJobs(db: Db, world: WorldRow): Promise<number> {
       else if (job.job_type === "sim_reply_back") await simReplyBack(db, world, job.payload as { sim_id: string; player_post_id: string; hostile: boolean; score: number });
       else if (job.job_type === "converse") await runConverse(db, world, job.payload as unknown as ConversePayload);
       else if (job.job_type === "dm_reply") await processDmReply(db, world, job.payload as { thread_id: string; message_id: string }, false);
+      else if (job.job_type === "dm_local_fallback") await localAiFallback(db, world, String(job.payload.task_id));
       else if (job.job_type === "review_report") await reviewReport(db, world, String(job.payload.report_id));
       check(await db.from("simulation_jobs").update({ status: "completed", completed_at: new Date().toISOString(), last_error: null }).eq("id", job.id), "complete_job");
       done++;
@@ -82,6 +85,7 @@ export async function processDueJobs(db: Db, world: WorldRow): Promise<number> {
       await db.from("simulation_jobs").update({ status: job.attempts >= 3 ? "failed" : "pending", last_error: msg.slice(0, 300), scheduled_at: new Date(Date.now() + 60_000 * job.attempts).toISOString() }).eq("id", job.id);
     }
   }
+  await flushLedgers(db, world.id);
   return done;
 }
 
@@ -92,6 +96,7 @@ async function loadPlayers(db: Db, worldId: string): Promise<PlayerRow[]> {
 /** One step of independent world life. */
 export async function simulateTick(db: Db, world: WorldRow): Promise<Record<string, number>> {
   const rng = new Rng(`${world.seed}:tick:${world.current_tick}`);
+  await ensureLedger(db, world.id);
   const pop = population(world);
   const stats: Record<string, number> = { posts: 0, events: 0, trends: 0 };
 
@@ -125,7 +130,7 @@ export async function simulateTick(db: Db, world: WorldRow): Promise<Record<stri
         const t = sim.personality_traits;
         return ({ praise: t.warmth, agree_add: t.rigor, disagree: t.contrarian, joke: t.humor, question: t.sociability, relate: t.warmth * 0.5, critique: t.rigor * t.contrarian, dunk: t.aggression * 0.6 } as Record<string, number>)[s];
       });
-      rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "reply", parent_post_id: p.id, root_post_id: p.id, content: generateReply(stance, { topic: p.topic_id, hook: extractHook(p.content) }, voiceOf(sim), r), topic_id: p.topic_id, stance, sim_tick: world.current_tick, like_count: r.int(0, 15) });
+      rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "reply", parent_post_id: p.id, root_post_id: p.id, content: generateReply(stance, { topic: p.topic_id, hook: extractHook(p.content), prevContent: p.content, usage: ledgerFor(world.id) }, voiceOf(sim), r), topic_id: p.topic_id, stance, sim_tick: world.current_tick, like_count: r.int(0, 15) });
       replyBumps.push(p.id);
     } else if (roll < 0.33 && target.length && sim.personality_traits.contrarian > 0.5) {
       const p = r.pick(target);
@@ -146,7 +151,7 @@ export async function simulateTick(db: Db, world: WorldRow): Promise<Record<stri
         rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "post", content: sp.question, topic_id: topic, stance: "poll", poll, sim_tick: world.current_tick, like_count: Math.round(eng.likes * 0.6), reply_count: 0, repost_count: eng.reposts, view_count: eng.views, signals: { poll_key: key } });
         continue;
       }
-      rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "post", content: generatePost(intent, { topic, tag: trend?.name }, voiceOf(sim), r), topic_id: topic, stance: intent, sim_tick: world.current_tick, like_count: eng.likes, reply_count: 0, repost_count: eng.reposts, view_count: eng.views });
+      rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "post", content: generatePost(intent, { topic, tag: trend?.name, usage: ledgerFor(world.id) }, voiceOf(sim), r), topic_id: topic, stance: intent, sim_tick: world.current_tick, like_count: eng.likes, reply_count: 0, repost_count: eng.reposts, view_count: eng.views });
     }
   }
   if (rows.length) {

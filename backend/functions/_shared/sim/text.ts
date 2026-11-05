@@ -6,6 +6,9 @@
 import { Rng } from "./rng.ts";
 import { vocabFor } from "./vocab.ts";
 import type { CommStyle, HumorStyle, Traits } from "./population.ts";
+import { respond } from "./bank/respond.ts";
+import type { UsageLedger } from "./bank/usage.ts";
+import { humanize } from "./dialogue.ts";
 
 export type PostIntent =
   | "observation" | "hot_take" | "question" | "announcement" | "joke" | "news_reaction" | "advice"
@@ -31,7 +34,20 @@ export interface TextContext {
   num?: number;
   /** Name of a memory or prior interaction, e.g. "the speedrun thread". */
   memory?: string;
+  /** Full text being replied to; enables triggered bank responses. */
+  prevContent?: string;
+  /** Handle (no @) of the author being replied to. */
+  prevAuthor?: string;
+  /** World usage ledger for bank entries. */
+  usage?: UsageLedger | null;
 }
+
+/** Reply stance -> bank act and the speaker's side. */
+const STANCE_ACT: Record<ReplyStance, [string, "ally" | "opponent" | "neutral"]> = {
+  praise: ["agree", "ally"], agree_add: ["agree_extend", "ally"], disagree: ["counter", "opponent"], critique: ["counter", "opponent"],
+  evidence_request: ["evidence_request", "opponent"], joke: ["joke", "neutral"], question: ["ask_followup", "neutral"],
+  misunderstand: ["clarify", "neutral"], defend: ["defend_op", "ally"], dunk: ["pile_on", "opponent"], recognize: ["agree", "ally"], relate: ["anecdote", "ally"],
+};
 
 const POST_TEMPLATES: Record<PostIntent, string[]> = {
   observation: [
@@ -289,6 +305,11 @@ function fill(template: string, ctx: TextContext, rng: Rng): string {
 }
 
 export function generatePost(intent: PostIntent, ctx: TextContext, voice: Voice, rng: Rng): string {
+  // Bank posts for general intents (mentions and feuds keep their targeted templates).
+  if (!ctx.mention && rng.chance(0.7)) {
+    const hit = respond({ act: `post_${intent}`, ctx: { topic: ctx.topic, tag: ctx.tag }, style: voice.style, usage: ctx.usage, decorate: false }, rng.fork("bankpost"), { allowCompose: false });
+    if (hit) return applyStyle(hit.text, voice, rng, false).slice(0, 280);
+  }
   const templates = POST_TEMPLATES[intent];
   const raw = fill(rng.pick(templates), ctx, rng);
   const styled = applyStyle(raw, voice, rng, intent !== "joke" && intent !== "trend" && intent !== "hot_take");
@@ -296,6 +317,11 @@ export function generatePost(intent: PostIntent, ctx: TextContext, voice: Voice,
 }
 
 export function generateReply(stance: ReplyStance, ctx: TextContext, voice: Voice, rng: Rng): string {
+  if (ctx.prevContent && rng.chance(0.85)) {
+    const [act, side] = STANCE_ACT[stance];
+    const hit = respond({ act, ctx: { topic: ctx.topic, text: ctx.prevContent, prev: ctx.prevAuthor, hook: ctx.hook }, style: voice.style, side, usage: ctx.usage }, rng.fork("bankreply"));
+    if (hit) return humanize(hit.text, voice, rng).slice(0, 280);
+  }
   const templates = REPLY_TEMPLATES[stance];
   const raw = fill(rng.pick(templates), ctx, rng);
   return applyStyle(raw, voice, rng, stance !== "dunk" && stance !== "joke").slice(0, 280);

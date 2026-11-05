@@ -288,6 +288,24 @@ export interface DmThreadResponse {
   sim: DmSim;
   messages: DmMessage[];
   relationship: { relationship_score: number; relationship_status: string } | null;
+  localTask?: DmLocalTask | null;
+}
+
+export interface DmLocalTask {
+  id: string;
+  draft: string[];
+  expiresAt: string;
+  prompt: {
+    username: string;
+    display_name: string;
+    archetype: string;
+    style: string;
+    bio?: string;
+    interests?: string[];
+    relationship?: number;
+    player: string;
+    history: { from: string; text: string }[];
+  };
 }
 
 export interface PulseResponse {

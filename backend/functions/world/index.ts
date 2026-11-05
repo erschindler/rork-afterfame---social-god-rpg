@@ -4,7 +4,7 @@
  */
 import { adminClient, check, HttpError, requireUser, runInBackground, serve, str, uuid } from "../_shared/http.ts";
 import { initializeWorld } from "../_shared/game/init.ts";
-import { createPersona, offlineSummary, validatePersona } from "../_shared/game/persona.ts";
+import { createPersona, offlineSummary, validateAvatar, validatePersona } from "../_shared/game/persona.ts";
 import { loadContext, population } from "../_shared/game/store.ts";
 import { syncWorld } from "../_shared/game/tick.ts";
 import { computeRank } from "../_shared/sim/reputation.ts";
@@ -49,7 +49,7 @@ serve("world", async (req, body) => {
     if (!["small", "standard", "large"].includes(size)) throw new HttpError(400, "Invalid world size.", "invalid_input");
     if (!["relaxed", "standard", "fast"].includes(pace)) throw new HttpError(400, "Invalid pace.", "invalid_input");
     if (!THEMES.includes(theme)) throw new HttpError(400, "Invalid atmosphere.", "invalid_input");
-    const persona = validatePersona((body.persona ?? {}) as Record<string, unknown>);
+    const persona = validatePersona((body.persona ?? {}) as Record<string, unknown>, user.id);
 
     // Resume a stuck initialization instead of creating duplicates.
     const pending = check(await db.from("worlds").select("*").eq("owner_id", user.id).neq("status", "ready").order("created_at", { ascending: false }).limit(1), "pending_world") as WorldRow[];
@@ -105,7 +105,7 @@ serve("world", async (req, body) => {
       const count = await db.from("world_members").select("id", { count: "exact", head: true }).eq("world_id", w.id).eq("status", "active");
       if ((count.count ?? 0) >= MAX_MEMBERS) throw new HttpError(409, `This world is full (${MAX_MEMBERS} players).`, "world_full");
     }
-    const persona = validatePersona((body.persona ?? {}) as Record<string, unknown>);
+    const persona = validatePersona((body.persona ?? {}) as Record<string, unknown>, user.id);
     const clash = check(await db.from("player_world_state").select("id, user_id").eq("world_id", w.id).eq("username", persona.username).maybeSingle(), "join_username") as { id: string; user_id: string } | null;
     if (clash && clash.user_id !== user.id) throw new HttpError(409, "That username is taken in this world.", "username_taken");
     if (!existing) check(await db.from("world_members").insert({ world_id: w.id, user_id: user.id, role: "player" }), "join_member");
@@ -185,7 +185,7 @@ serve("world", async (req, body) => {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (body.displayName !== undefined) patch.display_name = str(body.displayName, "Display name", { min: 1, max: 50 });
     if (body.bio !== undefined) patch.bio = str(body.bio, "Bio", { max: 160, optional: true });
-    if (body.avatar !== undefined) patch.avatar_reference = str(body.avatar, "Avatar", { min: 1, max: 80 });
+    if (body.avatar !== undefined) patch.avatar_reference = validateAvatar(body.avatar, user.id, player.username);
     if (body.publicStats !== undefined) patch.public_stats = body.publicStats === true;
     if (body.interests !== undefined) {
       const interests = Array.isArray(body.interests) ? body.interests.filter((i): i is string => typeof i === "string" && ALL_TOPICS.includes(i)).slice(0, 6) : [];

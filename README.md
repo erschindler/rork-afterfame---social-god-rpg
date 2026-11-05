@@ -47,7 +47,7 @@ backend/
 ## Setup (new Supabase project)
 
 1. Create a Supabase project. Under **Auth → Providers**, enable Email. Configure SMTP for real users; the built-in mailer is heavily rate-limited.
-2. **Migrations.** Run the files in `backend/migrations/` in numeric order (001 → 007), either in the SQL editor or with `psql`. Before running `006`, edit the function URL inside it to match your project ref.
+2. **Migrations.** Run the files in `backend/migrations/` in numeric order (001 → 008), either in the SQL editor or with `psql`. Before running `006`, edit the function URL inside it to match your project ref.
 3. **Deploy functions.**
    ```bash
    supabase functions deploy world --no-verify-jwt
@@ -70,7 +70,7 @@ backend/
 ## Testing
 
 ```bash
-cd backend/functions && deno test _shared/sim/          # 22 engine unit tests
+cd backend/functions && deno test _shared/               # 26 engine + response-bank tests
 deno run backend/scripts/calibrate.ts                    # engagement-rate calibration table
 OWNER_TOKEN=<jwt> WORLD_ID=<uuid> backend/scripts/security-check.sh   # 17 authorization checks
 ```
@@ -96,7 +96,12 @@ The engine tests cover: determinism, population consistency, zero-engagement pos
 - **Shared worlds.** Up to 8 players per world via invite links or codes; hosts can regenerate or turn off the link; members can leave.
 - **Moderation review.** Reports are reviewed by the simulation within minutes and the reporter is notified. Real players are never auto-punished.
 - **Live pulse.** Online players, active accounts, typing SIMs and a "new posts" pill on the home feed.
-- **Interface.** Dark (default) and light themes, a responsive desktop three-column layout, and mobile bottom navigation.
+- **Response bank.** 54 dialogue acts, 491 trigger-tagged lines and 5,450 templates expand into about 21M filled replies (about 530M with voice styling). Per-world usage counters (`response_usage`, reset every 3 days) steer SIMs away from repeats; when a line is exhausted the bank recombines fresh text on the fly.
+- **On-device AI (optional, free).** World Settings → On-device AI uses Chrome's built-in model or a WebLLM model (Qwen 2.5 0.5B / Llama 3.2 1B / Qwen 2.5 1.5B) running on WebGPU to rewrite SIM DM replies. The server always writes a draft first; if the browser doesn't answer within about 40 seconds, a fallback job sends the draft. Messages written on the device show an "On-device" label.
+- **Avatars.** 16 illustrated styles with variations, or a photo from the library or camera, cropped to 512×512 and stored in the public `avatars` bucket (each user writes only to their own folder).
+- **Fictional ads.** 50 made-up brands produce 21,600 ad variations, targeted by interests and rotated so recent ones don't repeat. Each brand has its own fake website (`/w/:id/site/:brand`) with a cart that never charges. Players can hide ads or brands and see a joke "Why this ad".
+- **Alerts.** Realtime pop-ups with Open or Reply actions for DMs, replies and mentions, an optional system notification when the tab is hidden, a WebAudio chime, and the unread count in the tab title. Preferences are stored per device.
+- **Interface.** Dark (default) and light themes, a responsive desktop three-column layout, mobile bottom navigation, keyboard shortcuts (press `?`), DM smart replies and draft autosave.
 
 **Deferred**
 - Image attachments.

@@ -618,6 +618,67 @@ export type Database = {
           },
         ]
       }
+      local_ai_tasks: {
+        Row: {
+          created_at: string
+          draft: string[]
+          expires_at: string
+          id: string
+          player_id: string
+          prompt: Json
+          sim_id: string
+          status: string
+          thread_id: string
+          world_id: string
+        }
+        Insert: {
+          created_at?: string
+          draft?: string[]
+          expires_at?: string
+          id?: string
+          player_id: string
+          prompt?: Json
+          sim_id: string
+          status?: string
+          thread_id: string
+          world_id: string
+        }
+        Update: {
+          created_at?: string
+          draft?: string[]
+          expires_at?: string
+          id?: string
+          player_id?: string
+          prompt?: Json
+          sim_id?: string
+          status?: string
+          thread_id?: string
+          world_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "local_ai_tasks_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "player_world_state"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "local_ai_tasks_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "dm_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "local_ai_tasks_world_id_fkey"
+            columns: ["world_id"]
+            isOneToOne: false
+            referencedRelation: "worlds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       moderation_reports: {
         Row: {
           created_at: string
@@ -1493,6 +1554,35 @@ export type Database = {
           },
         ]
       }
+      response_usage: {
+        Row: {
+          entry_id: string
+          last_used_at: string
+          uses: number
+          world_id: string
+        }
+        Insert: {
+          entry_id: string
+          last_used_at?: string
+          uses?: number
+          world_id: string
+        }
+        Update: {
+          entry_id?: string
+          last_used_at?: string
+          uses?: number
+          world_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "response_usage_world_id_fkey"
+            columns: ["world_id"]
+            isOneToOne: false
+            referencedRelation: "worlds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       simulated_accounts: {
         Row: {
           account_created_at: string
@@ -2087,6 +2177,10 @@ export type Database = {
           d_view: number
           p: string
         }
+        Returns: undefined
+      }
+      bump_response_usage: {
+        Args: { counts: number[]; ids: string[]; w: string }
         Returns: undefined
       }
       claim_due_jobs: {

@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Dices, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Avatar } from "@/components/Avatar";
+import { AvatarPicker } from "@/components/AvatarPicker";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -45,12 +45,7 @@ export function EditProfileDialog({ open, onOpenChange }: { open: boolean; onOpe
       <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto rounded-2xl border-border bg-card">
         <DialogTitle>Edit profile</DialogTitle>
         <DialogDescription>Public details people in this world see.</DialogDescription>
-        <div className="flex items-center gap-4">
-          <Avatar seed={avatar} size={72} />
-          <Button type="button" variant="secondary" onClick={() => setAvatar(`${player?.username ?? "me"}-${Math.random().toString(36).slice(2, 8)}`)}>
-            <Dices /> New look
-          </Button>
-        </div>
+        <AvatarPicker value={avatar} onChange={setAvatar} size={72} seedBase={player?.username ?? "me"} />
         <div className="space-y-1.5">
           <Label htmlFor="ep-name">Display name</Label>
           <Input id="ep-name" value={name} maxLength={50} onChange={(e) => setName(e.target.value)} />

@@ -158,7 +158,7 @@ async function stepContent(db: Db, world: WorldRow): Promise<void> {
     for (let k = 0; k < n; k++) {
       const replier = r.weighted(sims, (o) => (o.id === p.author_simulated_account_id ? 0 : o.interests.includes(p.topic_id) ? 3 : 0.2));
       const stance = r.pick<ReplyStance>(["praise", "agree_add", "disagree", "joke", "question", "relate", "critique"]);
-      const content = generateReply(stance, { topic: p.topic_id }, voiceOf(replier), r);
+      const content = generateReply(stance, { topic: p.topic_id, prevContent: p.content }, voiceOf(replier), r);
       const created = new Date(new Date(p.created_at).getTime() + r.int(3, 120) * 60_000);
       replies.push({
         world_id: world.id, author_type: "sim", author_simulated_account_id: replier.id, post_type: "reply", parent_post_id: p.id, root_post_id: p.id,
