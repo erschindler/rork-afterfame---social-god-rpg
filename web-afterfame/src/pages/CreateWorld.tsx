@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Check, Dices, Globe2, Loader2, Lock, Sparkles, Store, Target, User, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Dices, Loader2, Lock, Sparkles, Store, Target, User, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -54,6 +54,7 @@ export default function CreateWorld() {
   const [theme, setTheme] = useState<string>("mixed");
   const [size, setSize] = useState<string>("standard");
   const [pace, setPace] = useState<string>("standard");
+  const [privacy, setPrivacy] = useState<"private" | "shared">("private");
   const [displayName, setDisplayName] = useState<string>("");
   const [username, setUsername] = useState<string>("");
   const [bio, setBio] = useState<string>("");
@@ -81,7 +82,7 @@ export default function CreateWorld() {
     setLine(0);
     try {
       const res = await callFn<{ worldId: string }>("world", {
-        action: "create", name: name.trim(), size, pace, theme, privacy: "private",
+        action: "create", name: name.trim(), size, pace, theme, privacy,
         persona: { displayName: displayName.trim(), username, bio: bio.trim(), avatar, interests, startingCondition: start, nicheTopic: start === "niche" ? niche || interests[0] : null },
       });
       queryClient.invalidateQueries({ queryKey: ["worlds"] });
@@ -161,21 +162,16 @@ export default function CreateWorld() {
             </div>
             <div>
               <Label>Privacy</Label>
-              <div className="mt-2 grid gap-3 sm:grid-cols-3">
-                <Choice selected onClick={() => undefined}>
-                  <Lock className="mb-2 h-5 w-5 text-brand" />
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <Choice selected={privacy === "private"} onClick={() => setPrivacy("private")}>
+                  <Lock className={cn("mb-2 h-5 w-5", privacy === "private" && "text-brand")} />
                   <p className="font-semibold">Private world</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Just you and the simulation.</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Just you and the simulation. You can invite friends later.</p>
                 </Choice>
-                <Choice selected={false} disabled onClick={() => undefined}>
-                  <Globe2 className="mb-2 h-5 w-5" />
+                <Choice selected={privacy === "shared"} onClick={() => setPrivacy("shared")}>
+                  <Users className={cn("mb-2 h-5 w-5", privacy === "shared" && "text-brand")} />
                   <p className="font-semibold">Shared world</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Not open yet</p>
-                </Choice>
-                <Choice selected={false} disabled onClick={() => undefined}>
-                  <Users className="mb-2 h-5 w-5" />
-                  <p className="font-semibold">Private circle</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Not open yet</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Get an invite link for up to 7 friends. Compete for the same crowd.</p>
                 </Choice>
               </div>
             </div>
@@ -286,7 +282,7 @@ export default function CreateWorld() {
                 <div className="panel divide-y divide-border">
                   {[
                     ["World", `${name} · ${THEMES.find((t) => t.id === theme)?.name}`],
-                    ["Population", `${SIZES.find((s) => s.id === size)?.count} · ${pace} pace · private`],
+                    ["Population", `${SIZES.find((s) => s.id === size)?.count} · ${pace} pace · ${privacy}`],
                     ["You", `${displayName} (@${username})`],
                     ["Interests", interests.map(topicName).join(", ")],
                     ["Start", STARTS.find((s) => s.id === start)?.title ?? ""],

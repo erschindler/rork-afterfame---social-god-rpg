@@ -308,6 +308,124 @@ export type Database = {
           },
         ]
       }
+      dm_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          kind: string
+          meta: Json
+          sender_type: string
+          thread_id: string
+          world_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          kind?: string
+          meta?: Json
+          sender_type: string
+          thread_id: string
+          world_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          meta?: Json
+          sender_type?: string
+          thread_id?: string
+          world_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dm_messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "dm_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dm_messages_world_id_fkey"
+            columns: ["world_id"]
+            isOneToOne: false
+            referencedRelation: "worlds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      dm_threads: {
+        Row: {
+          created_at: string
+          id: string
+          last_message_at: string
+          last_preview: string | null
+          last_sender: string | null
+          player_id: string
+          player_last_read_at: string | null
+          sim_id: string
+          sim_last_read_at: string | null
+          sim_typing_until: string | null
+          status: string
+          unread_count: number
+          world_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_message_at?: string
+          last_preview?: string | null
+          last_sender?: string | null
+          player_id: string
+          player_last_read_at?: string | null
+          sim_id: string
+          sim_last_read_at?: string | null
+          sim_typing_until?: string | null
+          status?: string
+          unread_count?: number
+          world_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_message_at?: string
+          last_preview?: string | null
+          last_sender?: string | null
+          player_id?: string
+          player_last_read_at?: string | null
+          sim_id?: string
+          sim_last_read_at?: string | null
+          sim_typing_until?: string | null
+          status?: string
+          unread_count?: number
+          world_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dm_threads_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "player_world_state"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dm_threads_sim_id_fkey"
+            columns: ["sim_id"]
+            isOneToOne: false
+            referencedRelation: "simulated_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dm_threads_world_id_fkey"
+            columns: ["world_id"]
+            isOneToOne: false
+            referencedRelation: "worlds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       event_effects: {
         Row: {
           created_at: string
@@ -872,6 +990,55 @@ export type Database = {
           },
         ]
       }
+      poll_votes: {
+        Row: {
+          created_at: string
+          id: string
+          option_index: number
+          player_id: string
+          post_id: string
+          world_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          option_index: number
+          player_id: string
+          post_id: string
+          world_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          option_index?: number
+          player_id?: string
+          post_id?: string
+          world_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "poll_votes_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "player_world_state"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poll_votes_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poll_votes_world_id_fkey"
+            columns: ["world_id"]
+            isOneToOne: false
+            referencedRelation: "worlds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       post_interactions: {
         Row: {
           actor_player_id: string | null
@@ -997,6 +1164,7 @@ export type Database = {
           is_viral: boolean
           like_count: number
           parent_post_id: string | null
+          poll: Json | null
           post_type: string
           quote_count: number
           quoted_post_id: string | null
@@ -1007,6 +1175,7 @@ export type Database = {
           sim_tick: number
           spread_stage: string
           stance: string | null
+          thread_position: number | null
           topic_id: string | null
           updated_at: string
           view_count: number
@@ -1024,6 +1193,7 @@ export type Database = {
           is_viral?: boolean
           like_count?: number
           parent_post_id?: string | null
+          poll?: Json | null
           post_type?: string
           quote_count?: number
           quoted_post_id?: string | null
@@ -1034,6 +1204,7 @@ export type Database = {
           sim_tick?: number
           spread_stage?: string
           stance?: string | null
+          thread_position?: number | null
           topic_id?: string | null
           updated_at?: string
           view_count?: number
@@ -1051,6 +1222,7 @@ export type Database = {
           is_viral?: boolean
           like_count?: number
           parent_post_id?: string | null
+          poll?: Json | null
           post_type?: string
           quote_count?: number
           quoted_post_id?: string | null
@@ -1061,6 +1233,7 @@ export type Database = {
           sim_tick?: number
           spread_stage?: string
           stance?: string | null
+          thread_position?: number | null
           topic_id?: string | null
           updated_at?: string
           view_count?: number
@@ -1844,6 +2017,7 @@ export type Database = {
           current_tick: number
           id: string
           init_step: string | null
+          invite_code: string | null
           last_simulated_at: string
           name: string
           owner_id: string
@@ -1860,6 +2034,7 @@ export type Database = {
           current_tick?: number
           id?: string
           init_step?: string | null
+          invite_code?: string | null
           last_simulated_at?: string
           name: string
           owner_id: string
@@ -1876,6 +2051,7 @@ export type Database = {
           current_tick?: number
           id?: string
           init_step?: string | null
+          invite_code?: string | null
           last_simulated_at?: string
           name?: string
           owner_id?: string

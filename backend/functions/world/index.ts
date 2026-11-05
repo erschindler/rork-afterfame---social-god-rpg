@@ -10,6 +10,19 @@ import { syncWorld } from "../_shared/game/tick.ts";
 import { computeRank } from "../_shared/sim/reputation.ts";
 import { ALL_TOPICS } from "../_shared/sim/config.ts";
 import type { WorldRow } from "../_shared/game/types.ts";
+import { unreadDms } from "../_shared/game/dm.ts";
+
+const MAX_MEMBERS = 8;
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function newInviteCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+}
+function normalizeCode(raw: unknown): string {
+  const code = String(raw ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (code.length !== 8) throw new HttpError(400, "That invite code doesn't look right.", "invalid_input");
+  return code;
+}
 
 const THEMES = ["mainstream", "gaming", "tech", "entertainment", "politics", "creator", "underground", "mixed"];
 
@@ -29,7 +42,7 @@ serve("world", async (req, body) => {
   if (action === "create") {
     const name = str(body.name, "World name", { min: 1, max: 60 });
     const privacy = String(body.privacy ?? "private");
-    if (privacy !== "private") throw new HttpError(400, "Shared worlds and private circles are not open yet. Start with a private world.", "not_available");
+    if (!["private", "shared"].includes(privacy)) throw new HttpError(400, "Invalid privacy setting.", "invalid_input");
     const size = String(body.size ?? "small");
     const pace = String(body.pace ?? "standard");
     const theme = String(body.theme ?? "mixed");
@@ -48,7 +61,7 @@ serve("world", async (req, body) => {
       world = pending[0];
     } else {
       const seed = Math.floor(Math.random() * 2_000_000_000);
-      world = check(await db.from("worlds").insert({ owner_id: user.id, name, privacy_mode: "private", world_size: size, world_pace: pace, world_theme: theme, seed, status: "initializing", init_step: "accounts" }).select("*").single(), "insert_world") as WorldRow;
+      world = check(await db.from("worlds").insert({ owner_id: user.id, name, privacy_mode: privacy, invite_code: privacy === "shared" ? newInviteCode() : null, world_size: size, world_pace: pace, world_theme: theme, seed, status: "initializing", init_step: "accounts" }).select("*").single(), "insert_world") as WorldRow;
       check(await db.from("world_members").insert({ world_id: world.id, user_id: user.id, role: "owner" }), "insert_member");
       check(await db.from("world_settings").insert({ world_id: world.id, settings: { theme: "dark" } }), "insert_settings");
     }
@@ -65,7 +78,92 @@ serve("world", async (req, body) => {
     }
   }
 
+  if (action === "preview_invite") {
+    const code = normalizeCode(body.code);
+    const w = check(await db.from("worlds").select("id, name, world_theme, world_size, world_pace, status, owner_id").eq("invite_code", code).maybeSingle(), "preview_invite") as { id: string; name: string; world_theme: string; world_size: string; world_pace: string; status: string; owner_id: string } | null;
+    if (!w || w.status !== "ready") throw new HttpError(404, "This invite is invalid or was revoked.", "not_found");
+    const members = check(await db.from("world_members").select("user_id, status").eq("world_id", w.id).eq("status", "active"), "preview_members") as { user_id: string }[];
+    const players = check(await db.from("player_world_state").select("username, display_name, avatar_reference, user_id").eq("world_id", w.id).limit(MAX_MEMBERS), "preview_players") as { username: string; display_name: string; avatar_reference: string; user_id: string }[];
+    const owner = players.find((p) => p.user_id === w.owner_id);
+    return {
+      world: { id: w.id, name: w.name, theme: w.world_theme, size: w.world_size, pace: w.world_pace },
+      host: owner ? { username: owner.username, display_name: owner.display_name, avatar_reference: owner.avatar_reference } : null,
+      players: players.map(({ user_id: _u, ...p }) => p),
+      memberCount: members.length,
+      maxMembers: MAX_MEMBERS,
+      alreadyMember: members.some((m) => m.user_id === user.id),
+    };
+  }
+
+  if (action === "join") {
+    const code = normalizeCode(body.code);
+    const w = check(await db.from("worlds").select("*").eq("invite_code", code).maybeSingle(), "join_world") as WorldRow | null;
+    if (!w || w.status !== "ready") throw new HttpError(404, "This invite is invalid or was revoked.", "not_found");
+    const existing = check(await db.from("world_members").select("id, status").eq("world_id", w.id).eq("user_id", user.id).maybeSingle(), "join_existing") as { id: string; status: string } | null;
+    if (existing?.status === "removed") throw new HttpError(403, "You can't rejoin this world.", "forbidden");
+    if (!existing) {
+      const count = await db.from("world_members").select("id", { count: "exact", head: true }).eq("world_id", w.id).eq("status", "active");
+      if ((count.count ?? 0) >= MAX_MEMBERS) throw new HttpError(409, `This world is full (${MAX_MEMBERS} players).`, "world_full");
+    }
+    const persona = validatePersona((body.persona ?? {}) as Record<string, unknown>);
+    const clash = check(await db.from("player_world_state").select("id, user_id").eq("world_id", w.id).eq("username", persona.username).maybeSingle(), "join_username") as { id: string; user_id: string } | null;
+    if (clash && clash.user_id !== user.id) throw new HttpError(409, "That username is taken in this world.", "username_taken");
+    if (!existing) check(await db.from("world_members").insert({ world_id: w.id, user_id: user.id, role: "player" }), "join_member");
+    else if (existing.status !== "active") check(await db.from("world_members").update({ status: "active" }).eq("id", existing.id), "join_reactivate");
+    try {
+      const player = await createPersona(db, w, user.id, persona);
+      // Let the host know someone arrived.
+      if (w.owner_id !== user.id) {
+        await db.from("notifications").insert({ world_id: w.id, recipient_user_id: w.owner_id, notification_type: "follow", title: "A new player joined", body: `@${player.username} joined your world.`, source_entity_type: "player", source_entity_id: player.id, priority: 2 });
+      }
+      return { worldId: w.id };
+    } catch (err) {
+      if (!existing) await db.from("world_members").delete().eq("world_id", w.id).eq("user_id", user.id);
+      throw err;
+    }
+  }
+
   const worldId = uuid(body.worldId, "World");
+
+  if (action === "invite" || action === "revoke_invite" || action === "members") {
+    const { world } = await loadContext(db, user.id, worldId);
+    if (action !== "members" && world.owner_id !== user.id) throw new HttpError(403, "Only the world owner can manage invites.", "forbidden");
+    if (action === "invite") {
+      let code = (world as WorldRow & { invite_code?: string | null }).invite_code ?? null;
+      if (!code || body.regenerate === true) {
+        for (let i = 0; i < 4; i++) {
+          code = newInviteCode();
+          const res = await db.from("worlds").update({ invite_code: code, privacy_mode: "shared" }).eq("id", world.id);
+          if (!res.error) break;
+          if (res.error.code !== "23505" || i === 3) check(res, "set_invite");
+        }
+      }
+      return { code };
+    }
+    if (action === "revoke_invite") {
+      check(await db.from("worlds").update({ invite_code: null }).eq("id", world.id), "revoke_invite");
+      return { ok: true };
+    }
+    const members = check(await db.from("world_members").select("user_id, role, joined_at").eq("world_id", world.id).eq("status", "active"), "members") as { user_id: string; role: string }[];
+    const players = check(await db.from("player_world_state").select("id, user_id, username, display_name, avatar_reference, follower_count, current_rank, last_seen_at").eq("world_id", world.id), "member_players") as { user_id: string }[];
+    return {
+      code: world.owner_id === user.id ? ((world as WorldRow & { invite_code?: string | null }).invite_code ?? null) : null,
+      maxMembers: MAX_MEMBERS,
+      members: members.map((m) => {
+        const p = players.find((x) => x.user_id === m.user_id) as Record<string, unknown> | undefined;
+        if (!p) return null;
+        const { user_id: _u, ...rest } = p;
+        return { ...rest, role: m.role, isYou: m.user_id === user.id };
+      }).filter(Boolean),
+    };
+  }
+
+  if (action === "leave") {
+    const { world } = await loadContext(db, user.id, worldId);
+    if (world.owner_id === user.id) throw new HttpError(400, "Owners can't leave their own world. Delete it instead.", "invalid_action");
+    check(await db.from("world_members").delete().eq("world_id", world.id).eq("user_id", user.id), "leave_world");
+    return { ok: true };
+  }
 
   if (action === "sync") {
     const { world, player } = await loadContext(db, user.id, worldId);
@@ -73,9 +171,13 @@ serve("world", async (req, body) => {
     runInBackground(syncWorld(db, world));
     const summary = body.includeSummary ? await offlineSummary(db, world, player) : null;
     if (!body.includeSummary) await db.from("player_world_state").update({ last_seen_at: new Date().toISOString() }).eq("id", player.id);
-    const unread = await db.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_user_id", user.id).eq("world_id", worldId).is("read_at", null);
+    const [unread, dms] = await Promise.all([
+      db.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_user_id", user.id).eq("world_id", worldId).is("read_at", null),
+      unreadDms(db, player.id),
+    ]);
     const rank = computeRank({ fame: player.fame, influence: player.influence, followers: player.follower_count, outsideReach: player.outside_reach, viralPosts: player.viral_posts, population: population(world) });
-    return { world: { ...world, seed: undefined, population: population(world) }, player, rank, unread: unread.count ?? 0, summary };
+    const isOwner = world.owner_id === user.id;
+    return { world: { ...world, seed: undefined, invite_code: isOwner ? (world as WorldRow & { invite_code?: string | null }).invite_code ?? null : undefined, population: population(world), isOwner }, player, rank, unread: unread.count ?? 0, unreadDms: dms, summary };
   }
 
   if (action === "update_profile") {

@@ -106,6 +106,8 @@ export interface PostRow {
   sim_tick: number;
   created_at: string;
   deleted_at: string | null;
+  poll?: { options: string[]; counts: number[]; closes_at: string } | null;
+  thread_position?: number | null;
 }
 
 export const SIM_COLUMNS =

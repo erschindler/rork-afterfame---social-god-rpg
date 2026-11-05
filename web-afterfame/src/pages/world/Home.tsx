@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { ComposerBox } from "@/components/Composer";
 import { FeedList, type FeedFilter } from "@/components/FeedList";
+import { LivePulse } from "@/components/LivePulse";
 import { EmptyState } from "@/components/States";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,7 @@ export default function Home() {
           </button>
         ))}
       </div>
+      <LivePulse resetKey={tab} />
       <FeedList
         key={tab}
         filter={tab}

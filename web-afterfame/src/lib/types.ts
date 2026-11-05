@@ -31,10 +31,23 @@ export interface PostBase {
   author: AuthorView;
 }
 
+export interface PollView {
+  options: string[];
+  counts: number[];
+  total: number;
+  closes_at: string;
+  closed: boolean;
+  viewer_vote: number | null;
+  is_own: boolean;
+}
+
 export interface PostView extends PostBase {
   parent: { id: string; username: string } | null;
   quoted: PostBase | null;
   viewer: { liked: boolean; reposted: boolean; bookmarked: boolean };
+  poll?: PollView | null;
+  thread_position?: number | null;
+  children?: PostView[];
 }
 
 export interface WorldEventRow {
@@ -122,6 +135,8 @@ export interface WorldState {
   last_simulated_at: string;
   created_at: string;
   population: number;
+  invite_code?: string | null;
+  isOwner?: boolean;
 }
 
 export interface OfflineSummary {
@@ -135,6 +150,7 @@ export interface SyncResponse {
   player: PlayerState;
   rank: RankInfo;
   unread: number;
+  unreadDms?: number;
   summary: OfflineSummary | null;
 }
 
@@ -205,6 +221,7 @@ export interface ThreadResponse {
   post: PostView;
   ancestors: PostView[];
   replies: PostView[];
+  replyTotal?: number;
   quotes: PostView[];
   spread: SpreadRow[];
   comparison: string | null;
@@ -224,4 +241,91 @@ export interface NotificationRow {
   action_state: string | null;
   read_at: string | null;
   created_at: string;
+}
+
+export interface DmSim {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_reference: string;
+  archetype?: string;
+  follower_count_cache?: number;
+  bio?: string;
+}
+
+export interface DmThread {
+  id: string;
+  sim_id: string;
+  status: string;
+  last_message_at: string;
+  last_preview: string;
+  last_sender: "player" | "sim";
+  unread_count: number;
+  sim_typing_until: string | null;
+  sim_last_read_at: string | null;
+  player_last_read_at: string | null;
+  typing?: boolean;
+  sim?: DmSim | null;
+}
+
+export interface DmMessage {
+  id: string;
+  thread_id: string;
+  sender_type: "player" | "sim";
+  content: string;
+  kind: "text" | "offer" | "invite" | "system";
+  meta: { status?: "pending" | "accepted" | "declined"; fee?: number; brand?: string; [k: string]: unknown };
+  created_at: string;
+}
+
+export interface DmListResponse {
+  threads: DmThread[];
+  unread: number;
+}
+
+export interface DmThreadResponse {
+  thread: DmThread | null;
+  sim: DmSim;
+  messages: DmMessage[];
+  relationship: { relationship_score: number; relationship_status: string } | null;
+}
+
+export interface PulseResponse {
+  online_players: number;
+  active_accounts: number;
+  new_posts: number;
+  typing: { id: string; sim_id: string }[];
+  unread_dms: number;
+  now: string;
+}
+
+export interface ReportRow {
+  id: string;
+  target_entity_type: "post" | "sim" | "player";
+  target_entity_id: string;
+  reason: string;
+  status: "open" | "reviewed" | "dismissed" | "actioned";
+  created_at: string;
+  reviewed_at: string | null;
+}
+
+export interface MemberRow {
+  id: string;
+  username: string;
+  display_name: string;
+  avatar_reference: string;
+  follower_count: number;
+  current_rank: string;
+  last_seen_at: string | null;
+  role: string;
+  isYou: boolean;
+}
+
+export interface InvitePreview {
+  world: { id: string; name: string; theme: string; size: string; pace: string };
+  host: { username: string; display_name: string; avatar_reference: string } | null;
+  players: { username: string; display_name: string; avatar_reference: string }[];
+  memberCount: number;
+  maxMembers: number;
+  alreadyMember: boolean;
 }

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Award, Ban, Brain, CalendarDays, Flame, HeartHandshake, MoreHorizontal, Pin, Target, VolumeX } from "lucide-react";
+import { Award, Ban, Brain, Flag, Mail, CalendarDays, Flame, HeartHandshake, MoreHorizontal, Pin, Target, VolumeX } from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Avatar } from "@/components/Avatar";
@@ -38,6 +38,7 @@ interface PlayerProfile {
   kind: "player";
   account: { id: string; username: string; display_name: string; bio: string; avatar: string; interests: string[]; followers: number; following: number; posts: number; joined: string; rank: string; notoriety: string; career: string[]; niche_topic: string | null; streak_days: number; stats: Record<string, number> | null; rankProgress: RankInfo | null };
   isSelf: boolean;
+  viewer: { following: boolean; followsYou: boolean } | null;
   pinned: PostView | null;
   achievements: { unlocked_at: string; achievements: { code: string; name: string; description: string } }[];
   milestones: { id: string; title: string; description: string; started_at: string }[];
@@ -90,7 +91,8 @@ export default function Profile() {
   const d = q.data;
   const sim = d?.kind === "sim" ? d : null;
   const pl = d?.kind === "player" ? d : null;
-  const { moderate } = useModerate(sim?.account.id);
+  const { moderate } = useModerate(sim?.account.id ?? pl?.account.id);
+  const navigate = useNavigate();
 
   return (
     <div>
@@ -122,11 +124,29 @@ export default function Profile() {
                         <DropdownMenuItem onSelect={() => moderate(sim.viewer.blocked ? "unblock" : "block")}>
                           <Ban /> {sim.viewer.blocked ? "Unblock" : "Block"}
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={async () => {
+                            try {
+                              await callFn("social", { action: "report", worldId, targetType: "sim", targetId: sim.account.id, reason: "Reported from profile" });
+                              toast("Report sent. You'll hear back in a few minutes.");
+                            } catch (err) {
+                              toast.error(errorMessage(err));
+                            }
+                          }}
+                        >
+                          <Flag /> Report @{sim.account.username}
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    {!sim.viewer.blocked && (
+                      <Button variant="outline" size="icon" className="rounded-full" aria-label={`Message @${sim.account.username}`} onClick={() => navigate(`${base}/messages/@${sim.account.id}`)}>
+                        <Mail />
+                      </Button>
+                    )}
                     {!sim.viewer.blocked && <FollowButton key={String(sim.viewer.following)} accountId={sim.account.id} username={sim.account.username} initial={sim.viewer.following} size="default" />}
                   </>
                 )}
+                {pl && !pl.isSelf && pl.viewer && <FollowButton key={String(pl.viewer.following)} accountId={pl.account.id} username={pl.account.username} initial={pl.viewer.following} size="default" />}
                 {pl?.isSelf && (
                   <Button variant="outline" className="rounded-full font-bold" onClick={() => setEditing(true)}>
                     Edit profile
@@ -141,7 +161,7 @@ export default function Profile() {
               </div>
               <p className="text-muted-foreground">
                 @{d.account.username}
-                {sim?.viewer.followsYou && <span className="ml-2 rounded bg-elevated px-1.5 py-0.5 text-xs">Follows you</span>}
+                {(sim?.viewer.followsYou || pl?.viewer?.followsYou) && <span className="ml-2 rounded bg-elevated px-1.5 py-0.5 text-xs">Follows you</span>}
               </p>
               {d.account.bio && <p className="mt-3 text-[15px]">{d.account.bio}</p>}
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">

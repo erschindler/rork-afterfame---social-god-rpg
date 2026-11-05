@@ -23,7 +23,7 @@ export const LIMITS = {
   postsPerDay: 80,
   actionsPerMinute: 40,
   maxPendingJobsPerWorld: 200,
-  jobsPerSync: 8,
+  jobsPerSync: 16,
   maxCatchUpTicks: 6,
   tickBudgetMs: 12_000,
   feedPageSize: 25,

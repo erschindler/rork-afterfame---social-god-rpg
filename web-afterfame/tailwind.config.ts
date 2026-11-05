@@ -107,6 +107,10 @@ export default {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.35" },
         },
+        "typing": {
+          "0%, 60%, 100%": { transform: "translateY(0)", opacity: "0.45" },
+          "30%": { transform: "translateY(-4px)", opacity: "1" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -115,6 +119,7 @@ export default {
         pop: "pop 0.35s cubic-bezier(0.3, 1.5, 0.5, 1)",
         "bar-grow": "bar-grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both",
         "pulse-dot": "pulse-dot 1.6s ease-in-out infinite",
+        typing: "typing 1.2s ease-in-out infinite",
       },
     },
   },

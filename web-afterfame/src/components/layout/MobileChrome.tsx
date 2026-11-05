@@ -1,6 +1,6 @@
 import { Feather, Menu } from "lucide-react";
 import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 
 import { Avatar } from "@/components/Avatar";
 import { Logo } from "@/components/Logo";
@@ -54,18 +54,20 @@ export function MobileHeader() {
 }
 
 export function MobileTabBar() {
-  const { base, unread } = useWorld();
+  const { base, unread, unreadDms } = useWorld();
   const { openPost } = useComposer();
+  const { pathname } = useLocation();
+  const inChat = /\/messages\/[^/]+/.test(pathname);
   return (
     <>
-      <button
+      {!inChat && <button
         type="button"
         onClick={() => openPost()}
         aria-label="New post"
         className="fixed bottom-[calc(76px+env(safe-area-inset-bottom))] right-4 z-30 grid h-14 w-14 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-black/40 transition-transform active:scale-95 lg:hidden"
       >
         <Feather className="h-6 w-6" />
-      </button>
+      </button>}
       <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden">
         <ul className="grid grid-cols-5">
           {MOBILE_NAV.map((item) => (
@@ -78,6 +80,7 @@ export function MobileTabBar() {
                 <item.icon className="h-[22px] w-[22px]" />
                 {item.label}
                 {item.badge === "unread" && unread > 0 && <span className="absolute right-[calc(50%-18px)] top-2.5 h-2.5 w-2.5 rounded-full bg-infamy ring-2 ring-background" aria-label={`${unread} unread`} />}
+                {item.badge === "dms" && unreadDms > 0 && <span className="absolute right-[calc(50%-18px)] top-2.5 h-2.5 w-2.5 rounded-full bg-brand ring-2 ring-background" aria-label={`${unreadDms} unread messages`} />}
               </NavLink>
             </li>
           ))}

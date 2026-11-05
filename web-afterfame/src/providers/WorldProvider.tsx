@@ -30,7 +30,7 @@ export const [WorldProvider, useWorld] = createContextHook(() => {
       if (res.summary) setSummary(res.summary);
       return res;
     },
-    refetchInterval: 30_000,
+    refetchInterval: 20_000,
     refetchIntervalInBackground: false,
     staleTime: 10_000,
     retry: 1,
@@ -59,6 +59,24 @@ export const [WorldProvider, useWorld] = createContextHook(() => {
     };
   }, [user, worldId, queryClient]);
 
+  // Realtime: DMs arriving and SIM typing state.
+  const playerId = sync.data?.player.id;
+  useEffect(() => {
+    if (!playerId) return;
+    const channel = supabase
+      .channel(`dm-${playerId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "dm_threads", filter: `player_id=eq.${playerId}` }, (payload) => {
+        const row = payload.new as { id?: string } | null;
+        queryClient.invalidateQueries({ queryKey: ["dms", worldId] });
+        if (row?.id) queryClient.invalidateQueries({ queryKey: ["dm", worldId, row.id] });
+        queryClient.invalidateQueries({ queryKey: ["sync", worldId] });
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [playerId, worldId, queryClient]);
+
   /** Refresh after an action that may produce delayed reactions. */
   const refreshSoon = useCallback(() => {
     const run = () => {
@@ -83,6 +101,8 @@ export const [WorldProvider, useWorld] = createContextHook(() => {
     player: sync.data?.player ?? null,
     rank: sync.data?.rank ?? null,
     unread: sync.data?.unread ?? 0,
+    unreadDms: sync.data?.unreadDms ?? 0,
+    isOwner: sync.data?.world.isOwner ?? false,
     isLoading: sync.isLoading,
     error: sync.error,
     refetch: sync.refetch,

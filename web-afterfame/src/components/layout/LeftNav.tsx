@@ -10,7 +10,7 @@ import { useComposer } from "@/providers/ComposerProvider";
 import { useWorld } from "@/providers/WorldProvider";
 
 export function LeftNav() {
-  const { base, unread, player } = useWorld();
+  const { base, unread, unreadDms, player } = useWorld();
   const { openPost } = useComposer();
   return (
     <nav aria-label="Main" className="sticky top-0 flex h-dvh flex-col border-r border-border px-4 pb-4 pt-6">
@@ -36,11 +36,15 @@ export function LeftNav() {
                   <>
                     <item.icon className={cn("h-[22px] w-[22px] transition-transform group-hover:scale-105", isActive && "fill-brand/20")} strokeWidth={isActive ? 2.4 : 1.9} />
                     <span>{item.label}</span>
-                    {item.badge === "unread" && unread > 0 && (
-                      <span className="ml-auto grid h-[22px] min-w-[22px] place-items-center rounded-full bg-infamy px-1.5 text-xs font-bold text-white" aria-label={`${unread} unread`}>
-                        {unread > 99 ? "99+" : unread}
-                      </span>
-                    )}
+                    {(() => {
+                      const n = item.badge === "unread" ? unread : item.badge === "dms" ? unreadDms : 0;
+                      if (n <= 0) return null;
+                      return (
+                        <span className={cn("ml-auto grid h-[22px] min-w-[22px] place-items-center rounded-full px-1.5 text-xs font-bold", item.badge === "dms" ? "bg-brand text-primary-foreground" : "bg-infamy text-white")} aria-label={`${n} unread`}>
+                          {n > 99 ? "99+" : n}
+                        </span>
+                      );
+                    })()}
                   </>
                 )}
               </NavLink>

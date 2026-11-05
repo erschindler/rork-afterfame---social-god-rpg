@@ -28,6 +28,9 @@ const Achievements = lazy(() => import("./pages/world/Achievements"));
 const Bookmarks = lazy(() => import("./pages/world/Bookmarks"));
 const Relationships = lazy(() => import("./pages/world/Relationships"));
 const Settings = lazy(() => import("./pages/world/Settings"));
+const Messages = lazy(() => import("./pages/world/Messages"));
+const Conversation = lazy(() => import("./pages/world/Conversation"));
+const JoinWorld = lazy(() => import("./pages/JoinWorld"));
 const CommunitiesPage = lazy(() => import("./pages/world/Communities").then((m) => ({ default: m.CommunitiesPage })));
 const CommunityPage = lazy(() => import("./pages/world/Communities").then((m) => ({ default: m.CommunityPage })));
 
@@ -56,9 +59,12 @@ const App = () => (
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/worlds" element={<RequireAuth><Worlds /></RequireAuth>} />
                 <Route path="/worlds/new" element={<RequireAuth><CreateWorld /></RequireAuth>} />
+                <Route path="/join/:code" element={<RequireAuth><JoinWorld /></RequireAuth>} />
                 <Route path="/w/:worldId" element={<RequireAuth><WorldLayout /></RequireAuth>}>
                   <Route index element={<Suspense fallback={<Fallback />}><Home /></Suspense>} />
                   <Route path="discover" element={<Suspense fallback={<Fallback />}><Discover /></Suspense>} />
+                  <Route path="messages" element={<Suspense fallback={<Fallback />}><Messages /></Suspense>} />
+                  <Route path="messages/:key" element={<Suspense fallback={<Fallback />}><Conversation /></Suspense>} />
                   <Route path="notifications" element={<Suspense fallback={<Fallback />}><Notifications /></Suspense>} />
                   <Route path="communities" element={<Suspense fallback={<Fallback />}><CommunitiesPage /></Suspense>} />
                   <Route path="c/:slug" element={<Suspense fallback={<Fallback />}><CommunityPage /></Suspense>} />

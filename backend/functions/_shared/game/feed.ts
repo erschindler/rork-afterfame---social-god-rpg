@@ -37,11 +37,24 @@ export interface PostView {
   stance: string | null;
   author: AuthorView;
   parent: { id: string; username: string } | null;
-  quoted: Omit<PostView, "quoted" | "parent" | "viewer"> | null;
+  quoted: Omit<PostView, "quoted" | "parent" | "viewer" | "children"> | null;
   viewer: { liked: boolean; reposted: boolean; bookmarked: boolean };
+  poll: PollView | null;
+  thread_position: number | null;
+  children?: PostView[];
 }
 
-const POST_COLS = "id, world_id, author_type, author_player_id, author_simulated_account_id, parent_post_id, root_post_id, quoted_post_id, post_type, content, topic_id, stance, like_count, reply_count, repost_count, quote_count, view_count, spread_stage, is_viral, created_at, deleted_at";
+export interface PollView {
+  options: string[];
+  counts: number[];
+  total: number;
+  closes_at: string;
+  closed: boolean;
+  viewer_vote: number | null;
+  is_own: boolean;
+}
+
+const POST_COLS = "id, world_id, author_type, author_player_id, author_simulated_account_id, parent_post_id, root_post_id, quoted_post_id, post_type, content, topic_id, stance, like_count, reply_count, repost_count, quote_count, view_count, spread_stage, is_viral, created_at, deleted_at, poll, thread_position";
 
 export async function hydrate(db: Db, viewer: PlayerRow, posts: PostRow[]): Promise<PostView[]> {
   const live = posts.filter((p) => !p.deleted_at);
@@ -50,11 +63,18 @@ export async function hydrate(db: Db, viewer: PlayerRow, posts: PostRow[]): Prom
   const parentIds = [...new Set(live.map((p) => p.parent_post_id).filter(Boolean))] as string[];
   const ids = live.map((p) => p.id);
   const empty = Promise.resolve({ data: [], error: null });
-  const [quotedRes, parentRes, mineRes] = await Promise.all([
+  const pollIds = live.filter((p) => p.poll).map((p) => p.id);
+  const [quotedRes, parentRes, mineRes, votesRes] = await Promise.all([
     quotedIds.length ? db.from("posts").select(POST_COLS).in("id", quotedIds) : empty,
     parentIds.length ? db.from("posts").select("id, author_type, author_player_id, author_simulated_account_id").in("id", parentIds) : empty,
     db.from("post_interactions").select("post_id, interaction_type").eq("actor_player_id", viewer.id).in("post_id", ids),
+    pollIds.length ? db.from("poll_votes").select("post_id, option_index").eq("player_id", viewer.id).in("post_id", pollIds) : empty,
   ]);
+  const votes = new Map((check(votesRes, "hydrate_votes") as { post_id: string; option_index: number }[]).map((v) => [v.post_id, v.option_index]));
+  const pollOf = (p: PostRow): PollView | null => p.poll ? {
+    options: p.poll.options, counts: p.poll.counts, total: p.poll.counts.reduce((a, b) => a + b, 0), closes_at: p.poll.closes_at,
+    closed: Date.parse(p.poll.closes_at) <= Date.now(), viewer_vote: votes.get(p.id) ?? null, is_own: p.author_player_id === viewer.id,
+  } : null;
   const quoted = check(quotedRes, "hydrate_quoted") as PostRow[];
   const parents = check(parentRes, "hydrate_parents") as PostRow[];
   const mine = check(mineRes, "hydrate_viewer") as { post_id: string; interaction_type: string }[];
@@ -75,6 +95,7 @@ export async function hydrate(db: Db, viewer: PlayerRow, posts: PostRow[]): Prom
   const base = (p: PostRow) => ({
     id: p.id, post_type: p.post_type, content: p.content, topic_id: p.topic_id, created_at: p.created_at, like_count: p.like_count, reply_count: p.reply_count,
     repost_count: p.repost_count, quote_count: p.quote_count, view_count: p.view_count, is_viral: p.is_viral, spread_stage: p.spread_stage, stance: p.stance, author: authorOf(p)!,
+    poll: pollOf(p), thread_position: p.thread_position ?? null,
   });
   return live.filter((p) => authorOf(p)).map((p) => {
     const q = p.quoted_post_id ? quoted.find((x) => x.id === p.quoted_post_id && !x.deleted_at) : null;
@@ -131,9 +152,10 @@ export async function homeFeed(db: Db, world: WorldRow, player: PlayerRow, filte
   q = q.in("post_type", ["post", "quote"]);
   if (cursor) q = q.lt("created_at", cursor);
   if (filter === "following") {
-    const f = check(await db.from("follows").select("followed_simulated_account_id").eq("follower_player_id", player.id), "following_ids") as { followed_simulated_account_id: string }[];
+    const f = check(await db.from("follows").select("followed_simulated_account_id, followed_player_id").eq("follower_player_id", player.id), "following_ids") as { followed_simulated_account_id: string | null; followed_player_id: string | null }[];
     const ids = f.map((x) => x.followed_simulated_account_id).filter(Boolean);
-    q = ids.length ? q.or(`author_player_id.eq.${player.id},author_simulated_account_id.in.(${ids.join(",")})`) : q.eq("author_player_id", player.id);
+    const pids = [player.id, ...f.map((x) => x.followed_player_id).filter(Boolean)];
+    q = ids.length ? q.or(`author_player_id.in.(${pids.join(",")}),author_simulated_account_id.in.(${ids.join(",")})`) : q.in("author_player_id", pids as string[]);
   } else if (filter === "communities") {
     const mine = check(await db.from("community_memberships").select("communities!inner(topic_id)").eq("player_id", player.id), "my_communities") as unknown as { communities: { topic_id: string } }[];
     let topics = mine.map((m) => m.communities.topic_id);
@@ -194,9 +216,32 @@ export async function thread(db: Db, world: WorldRow, player: PlayerRow, postId:
     ancestors.unshift(parent);
     cur = parent;
   }
-  let rq = db.from("posts").select(POST_COLS).eq("parent_post_id", post.id).is("deleted_at", null);
-  rq = sort === "recent" ? rq.order("created_at", { ascending: false }) : rq.order("like_count", { ascending: false }).order("created_at", { ascending: true });
-  const replies = check(await rq.limit(60), "thread_replies") as PostRow[];
+  // Whole conversation under this post, as a tree (people answer each other).
+  const rootId = post.root_post_id ?? post.id;
+  const convo = check(await db.from("posts").select(POST_COLS).eq("root_post_id", rootId).is("deleted_at", null).order("created_at", { ascending: true }).limit(300), "thread_convo") as PostRow[];
+  const byParent = new Map<string, PostRow[]>();
+  for (const r of convo) if (r.parent_post_id) byParent.set(r.parent_post_id, [...(byParent.get(r.parent_post_id) ?? []), r]);
+  const direct = [...(byParent.get(post.id) ?? [])];
+  const score = (r: PostRow) => r.like_count + r.reply_count * 2;
+  direct.sort((a, b) => {
+    const ta = a.thread_position && a.author_player_id === post.author_player_id ? 1 : 0;
+    const tb = b.thread_position && b.author_player_id === post.author_player_id ? 1 : 0;
+    if (ta !== tb) return tb - ta;
+    return sort === "recent" ? Date.parse(b.created_at) - Date.parse(a.created_at) : score(b) - score(a) || Date.parse(a.created_at) - Date.parse(b.created_at);
+  });
+  const replies = direct.slice(0, 60);
+  const descendants: PostRow[] = [];
+  const childMap = new Map<string, string[]>();
+  const walk = (id: string, depth: number) => {
+    const kids = byParent.get(id) ?? [];
+    childMap.set(id, kids.map((k) => k.id));
+    for (const k of kids) {
+      descendants.push(k);
+      // Beyond depth 3 the chain continues flat under the last visible level.
+      walk(k.id, depth + 1);
+    }
+  };
+  for (const r of replies) walk(r.id, 1);
   const quotes = check(await db.from("posts").select(POST_COLS).eq("quoted_post_id", post.id).is("deleted_at", null).order("created_at", { ascending: false }).limit(10), "thread_quotes") as PostRow[];
   const spread = check(await db.from("post_spread").select("stage, label, detail, count, created_at").eq("post_id", post.id).order("created_at"), "thread_spread") as { stage: string; label: string; detail: string; count: number; created_at: string }[];
   const [main] = await hydrate(db, player, [post]);
@@ -215,11 +260,52 @@ export async function thread(db: Db, world: WorldRow, player: PlayerRow, postId:
   return {
     post: main,
     ancestors: anc,
-    replies: await hydrate(db, player, replies),
+    replies: await buildTree(db, player, replies, descendants, childMap),
+    replyTotal: convo.filter((c) => c.id !== post.id).length,
     quotes: await hydrate(db, player, quotes),
     spread,
     comparison,
     ancestorsMissing: post.parent_post_id !== null && ancestors.length === 0,
+  };
+}
+
+async function buildTree(db: Db, player: PlayerRow, top: PostRow[], descendants: PostRow[], childMap: Map<string, string[]>): Promise<PostView[]> {
+  const views = await hydrate(db, player, [...top, ...descendants]);
+  const byId = new Map(views.map((v) => [v.id, v]));
+  const attach = (v: PostView, depth: number): PostView => {
+    const kids = (childMap.get(v.id) ?? []).map((id) => byId.get(id)).filter(Boolean) as PostView[];
+    if (depth >= 3) {
+      // Flatten deeper chains so threads stay readable on a phone.
+      const flat: PostView[] = [];
+      const collect = (x: PostView) => (childMap.get(x.id) ?? []).forEach((id) => { const c = byId.get(id); if (c) { flat.push({ ...c, children: [] }); collect(c); } });
+      collect(v);
+      return { ...v, children: flat.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) };
+    }
+    return { ...v, children: kids.map((k) => attach(k, depth + 1)) };
+  };
+  return top.map((t) => byId.get(t.id)).filter(Boolean).map((v) => attach(v as PostView, 1));
+}
+
+/** Lightweight "what's happening right now" poll for live UI. */
+export async function pulse(db: Db, world: WorldRow, player: PlayerRow, since: string | null) {
+  const five = new Date(Date.now() - 5 * 60_000).toISOString();
+  const fifteen = new Date(Date.now() - 15 * 60_000).toISOString();
+  const sinceIso = since && !Number.isNaN(Date.parse(since)) ? since : five;
+  const [playersRes, activeRes, newRes, typingRes, unreadRes] = await Promise.all([
+    db.from("player_world_state").select("id", { count: "exact", head: true }).eq("world_id", world.id).gte("last_seen_at", five),
+    db.from("posts").select("author_simulated_account_id").eq("world_id", world.id).eq("author_type", "sim").gte("created_at", fifteen).limit(400),
+    db.from("posts").select("id", { count: "exact", head: true }).eq("world_id", world.id).is("deleted_at", null).in("post_type", ["post", "quote"]).gt("created_at", sinceIso).neq("author_player_id", player.id),
+    db.from("dm_threads").select("id, sim_id").eq("player_id", player.id).gt("sim_typing_until", new Date().toISOString()),
+    db.from("dm_threads").select("unread_count").eq("player_id", player.id).gt("unread_count", 0),
+  ]);
+  const active = new Set((check(activeRes, "pulse_active") as { author_simulated_account_id: string }[]).map((r) => r.author_simulated_account_id)).size;
+  return {
+    online_players: Math.max(1, playersRes.count ?? 1),
+    active_accounts: active,
+    new_posts: newRes.count ?? 0,
+    typing: check(typingRes, "pulse_typing"),
+    unread_dms: (check(unreadRes, "pulse_unread") as { unread_count: number }[]).reduce((n, r) => n + r.unread_count, 0),
+    now: new Date().toISOString(),
   };
 }
 
@@ -269,6 +355,10 @@ export async function profile(db: Db, world: WorldRow, viewer: PlayerRow, userna
       rankProgress: showStats ? rank : null,
     },
     isSelf,
+    viewer: isSelf ? null : {
+      following: !!check(await db.from("follows").select("id").eq("follower_player_id", viewer.id).eq("followed_player_id", pl.id).maybeSingle(), "pp_following"),
+      followsYou: !!check(await db.from("follows").select("id").eq("follower_player_id", pl.id).eq("followed_player_id", viewer.id).maybeSingle(), "pp_follows_you"),
+    },
     pinned: pinned && !pinned.deleted_at ? (await hydrate(db, viewer, [pinned]))[0] ?? null : null,
     achievements, milestones,
     posts: await hydrate(db, viewer, posts),

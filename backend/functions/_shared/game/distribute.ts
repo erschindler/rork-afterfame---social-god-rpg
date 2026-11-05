@@ -17,6 +17,12 @@ import { applyReputation, createEvent, notify, population, refreshPlayerCounts, 
 import { voiceOf } from "./util.ts";
 import { evaluateAchievements } from "./achievements.ts";
 import { progressChallenge } from "./challenges.ts";
+import { actFromStance, generateDialogue } from "../sim/dialogue.ts";
+import { isClosed, optionWeights, pickOption, type Poll } from "../sim/polls.ts";
+import { scheduleConversation } from "./conversation.ts";
+
+/** Stances whose dialogue-engine version reads more naturally than the classic template. */
+const KEEP_CLASSIC = new Set<ReplyStance>(["recognize", "misunderstand", "dunk"]);
 
 const SUPPORTIVE = new Set<ReplyStance>(["praise", "agree_add", "relate", "defend", "recognize"]);
 const CRITICAL = new Set<ReplyStance>(["disagree", "critique", "dunk", "evidence_request"]);
@@ -174,7 +180,11 @@ export async function processDistribution(db: Db, world: WorldRow, postId: strin
       critical++;
       if (RIGOROUS.has(sim.archetype) && (stance === "critique" || stance === "evidence_request")) expertCritiques++;
     }
-    let content = generateReply(stance, { topic: signals.topic, hook, memory: memMap.get(sim.id)?.last ? "that earlier thread" : undefined }, voiceOf(sim), rng.fork(`reply${sim.id}`));
+    const rr = rng.fork(`reply${sim.id}`);
+    const act = actFromStance(stance);
+    let content = act && !(KEEP_CLASSIC.has(stance) && rr.chance(0.7)) && !memMap.get(sim.id)?.last
+      ? generateDialogue(act, { topic: signals.topic, prevContent: post.content, prevAuthor: player.username, opAuthor: player.username }, voiceOf(sim), rr).text
+      : generateReply(stance, { topic: signals.topic, hook, memory: memMap.get(sim.id)?.last ? "that earlier thread" : undefined }, voiceOf(sim), rr);
     content = await rephrase(modelCfg, content, `${sim.display_name}, ${sim.archetype}, ${sim.communication_style} tone`, `Replying (${stance}) to: ${post.content}`);
     replyRows.push({
       world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "reply", parent_post_id: post.id, root_post_id: post.root_post_id ?? post.id,
@@ -194,7 +204,33 @@ export async function processDistribution(db: Db, world: WorldRow, postId: strin
       stance, sim_tick: world.current_tick, like_count: Math.round(sim.follower_count_cache * 0.01 * rng.range(0.5, 2)), view_count: Math.round(sim.follower_count_cache * 0.2),
     });
   }
-  if (replyRows.length) check(await db.from("posts").insert(replyRows, { defaultToNull: false }), "insert_sim_replies");
+  if (replyRows.length) {
+    const ins = check(await db.from("posts").insert(replyRows, { defaultToNull: false }).select("id, author_simulated_account_id, stance"), "insert_sim_replies") as { id: string; author_simulated_account_id: string; stance: ReplyStance }[];
+    // Other accounts pile into the replies: someone answers a critic, someone backs a fan.
+    const convRng = rng.fork("conv");
+    const starts = ins.filter(() => convRng.chance(stage === 1 ? 0.3 : 0.18)).slice(0, 2);
+    for (const reply of starts) {
+      const sim = replyers.find((x) => x.sim.id === reply.author_simulated_account_id)?.sim;
+      if (!sim) continue;
+      const team = SUPPORTIVE.has(reply.stance) ? "pro" : CRITICAL.has(reply.stance) ? "con" : "neutral";
+      await scheduleConversation(db, world, {
+        rootId: post.root_post_id ?? post.id, parentId: reply.id, lastAct: actFromStance(reply.stance), heat: CRITICAL.has(reply.stance) ? 0.6 : 0.4, rng: convRng.fork(reply.id),
+        participants: [{ id: player.id, username: player.username, team: "pro", player: true }, { id: sim.id, username: sim.username, team }],
+      });
+    }
+  }
+
+  // Poll votes from everyone who saw the post.
+  const poll = post.poll;
+  if (poll && !isClosed(poll)) {
+    const weights = optionWeights(post.id, poll.options.length);
+    const counts = [...poll.counts];
+    const vr = rng.fork("votes");
+    for (const { sim } of reactions) if (vr.chance(0.45)) counts[pickOption(weights, vr.fork(sim.id), sim.personality_traits.contrarian)]++;
+    const fresh = check(await db.from("posts").select("poll").eq("id", post.id).single(), "reload_poll") as { poll: Poll };
+    const added = counts.map((c, i) => c - poll.counts[i]);
+    check(await db.from("posts").update({ poll: { ...fresh.poll, counts: fresh.poll.counts.map((c, i) => c + (added[i] ?? 0)) } }).eq("id", post.id), "update_poll_votes");
+  }
   if (quoteRows.length) check(await db.from("posts").insert(quoteRows, { defaultToNull: false }), "insert_sim_quotes");
 
   // Follows / unfollows (bounded per stage to avoid unrealistic bursts)

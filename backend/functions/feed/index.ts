@@ -1,7 +1,9 @@
 /** Read models that need ranking or cross-table hydration. */
 import { adminClient, check, HttpError, requireUser, serve, str, uuid } from "../_shared/http.ts";
 import { loadContext } from "../_shared/game/store.ts";
-import { discover, type FeedFilter, homeFeed, hydrate, profile, search, sidebar, thread } from "../_shared/game/feed.ts";
+import { discover, type FeedFilter, homeFeed, hydrate, profile, pulse, search, sidebar, thread } from "../_shared/game/feed.ts";
+import { dmList, dmThread } from "../_shared/game/dm.ts";
+import { listReports } from "../_shared/game/moderation.ts";
 import type { PostRow } from "../_shared/game/types.ts";
 
 const FILTERS: FeedFilter[] = ["for_you", "following", "trending", "latest", "communities", "bookmarks"];
@@ -25,6 +27,17 @@ serve("feed", async (req, body) => {
     }
     case "search":
       return await search(db, world, player, str(body.q, "Search", { max: 80, optional: true }));
+    case "dm_list":
+      return await dmList(db, player);
+    case "dm_thread":
+      return await dmThread(db, world, player, {
+        threadId: typeof body.threadId === "string" ? uuid(body.threadId, "Conversation") : null,
+        simId: typeof body.accountId === "string" ? uuid(body.accountId, "Account") : null,
+      });
+    case "pulse":
+      return await pulse(db, world, player, typeof body.since === "string" ? body.since : null);
+    case "reports":
+      return await listReports(db, world, user.id);
     case "discover":
       return await discover(db, world, player);
     case "sidebar":

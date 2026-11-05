@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Hash, Loader2 } from "lucide-react";
+import { BarChart2, Hash, Loader2, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -54,6 +54,8 @@ export function ComposerBox({ mode, onDone, autoFocus, inline }: ComposerBoxProp
   });
   const [topic, setTopic] = useState<string>("auto");
   const [busy, setBusy] = useState<boolean>(false);
+  const [parts, setParts] = useState<string[]>([]);
+  const [poll, setPoll] = useState<{ options: string[]; durationHours: number } | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -68,7 +70,10 @@ export function ComposerBox({ mode, onDone, autoFocus, inline }: ComposerBoxProp
   }, [text]);
 
   const length = text.trim().length;
-  const canPost = length > 0 && text.length <= LIMIT && !busy;
+  const pollOptions = poll?.options.map((o) => o.trim()).filter(Boolean) ?? [];
+  const pollValid = !poll || (pollOptions.length >= 2 && new Set(pollOptions.map((o) => o.toLowerCase())).size === pollOptions.length);
+  const partsValid = parts.every((p) => p.trim().length > 0 && p.length <= LIMIT);
+  const canPost = length > 0 && text.length <= LIMIT && !busy && pollValid && partsValid;
 
   const submit = async () => {
     if (!canPost) return;
@@ -77,11 +82,17 @@ export function ComposerBox({ mode, onDone, autoFocus, inline }: ComposerBoxProp
       const body: Record<string, unknown> = { worldId, content: text.trim(), topic: topic === "auto" ? null : topic };
       if (mode.kind === "reply") Object.assign(body, { action: "reply", parentId: mode.target.id });
       else if (mode.kind === "quote") Object.assign(body, { action: "quote", quotedId: mode.target.id });
-      else body.action = "post";
+      else if (parts.length) Object.assign(body, { action: "thread", contents: [text.trim(), ...parts.map((p) => p.trim())] });
+      else {
+        body.action = "post";
+        if (poll) body.poll = { options: pollOptions, durationHours: poll.durationHours };
+      }
       await callFn("social", body);
       setText("");
+      setParts([]);
+      setPoll(null);
       if (inline) localStorage.removeItem(DRAFT_KEY(worldId));
-      toast(mode.kind === "reply" ? "Reply sent" : mode.kind === "quote" ? "Quote posted" : "Posted. Let's see who notices.");
+      toast(mode.kind === "reply" ? "Reply sent" : mode.kind === "quote" ? "Quote posted" : parts.length ? `Thread of ${parts.length + 1} posted` : poll ? "Poll is live" : "Posted. Let's see who notices.");
       queryClient.invalidateQueries({ queryKey: ["feed", worldId] });
       refreshSoon();
       onDone?.();
@@ -115,8 +126,65 @@ export function ComposerBox({ mode, onDone, autoFocus, inline }: ComposerBoxProp
           className="block w-full resize-none rounded-xl border border-border bg-background/60 px-4 py-3 text-[16px] leading-snug placeholder:text-muted-foreground focus:border-brand/60 focus:outline-none focus:ring-0"
         />
         {mode.kind === "quote" && <QuotedPost post={mode.target} />}
+        {isPost && poll && (
+          <div className="mt-3 rounded-xl border border-border p-3">
+            <div className="flex flex-col gap-2">
+              {poll.options.map((opt, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={opt}
+                    maxLength={40}
+                    aria-label={`Option ${i + 1}`}
+                    placeholder={i < 2 ? `Option ${i + 1}` : `Option ${i + 1} (optional)`}
+                    onChange={(e) => setPoll({ ...poll, options: poll.options.map((o, j) => (j === i ? e.target.value : o)) })}
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-background/60 px-3 text-[15px] placeholder:text-muted-foreground focus:border-brand/60 focus:outline-none"
+                  />
+                  {poll.options.length > 2 && (
+                    <button type="button" aria-label="Remove option" onClick={() => setPoll({ ...poll, options: poll.options.filter((_, j) => j !== i) })} className="grid h-9 w-9 place-items-center rounded-full text-muted-foreground hover:bg-elevated hover:text-foreground">
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              {poll.options.length < 4 ? (
+                <button type="button" onClick={() => setPoll({ ...poll, options: [...poll.options, ""] })} className="flex items-center gap-1 text-sm font-semibold text-brand hover:underline">
+                  <Plus className="h-4 w-4" /> Add option
+                </button>
+              ) : <span />}
+              <div className="flex items-center gap-1 rounded-lg bg-elevated p-0.5" role="radiogroup" aria-label="Poll length">
+                {[1, 6, 24].map((h) => (
+                  <button key={h} type="button" role="radio" aria-checked={poll.durationHours === h} onClick={() => setPoll({ ...poll, durationHours: h })} className={cn("h-8 rounded-md px-3 text-[13px] font-semibold transition-colors", poll.durationHours === h ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                    {h}h
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button type="button" onClick={() => setPoll(null)} className="mt-2 text-[13px] font-medium text-infamy hover:underline">Remove poll</button>
+          </div>
+        )}
+        {isPost && parts.map((p, i) => (
+          <div key={i} className="relative mt-3 pl-4">
+            <span aria-hidden className="absolute bottom-2 left-0 top-[-12px] w-0.5 rounded bg-border" />
+            <textarea
+              value={p}
+              autoFocus
+              aria-label={`Thread post ${i + 2}`}
+              onChange={(e) => setParts(parts.map((x, j) => (j === i ? e.target.value : x)))}
+              placeholder="Add another post"
+              rows={2}
+              className={cn("block w-full resize-none rounded-xl border border-border bg-background/60 px-4 py-3 pr-10 text-[16px] leading-snug placeholder:text-muted-foreground focus:border-brand/60 focus:outline-none", p.length > LIMIT && "border-infamy")}
+            />
+            <button type="button" aria-label="Remove post from thread" onClick={() => setParts(parts.filter((_, j) => j !== i))} className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full text-muted-foreground hover:bg-elevated hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+            <span className={cn("absolute bottom-2 right-3 text-[11px] tabular-nums text-muted-foreground", p.length > LIMIT && "text-infamy")}>{p.length}/{LIMIT}</span>
+          </div>
+        ))}
         <div className="mt-3 flex items-center justify-between gap-3">
           {isPost ? (
+            <div className="flex min-w-0 items-center gap-1">
             <Select value={topic} onValueChange={setTopic}>
               <SelectTrigger className="h-9 w-auto gap-2 rounded-lg border-border bg-transparent px-3 text-sm" aria-label="Topic">
                 <Hash className="h-4 w-4 text-muted-foreground" />
@@ -131,6 +199,28 @@ export function ComposerBox({ mode, onDone, autoFocus, inline }: ComposerBoxProp
                 ))}
               </SelectContent>
             </Select>
+            <button
+              type="button"
+              aria-label="Add poll"
+              title="Poll"
+              aria-pressed={!!poll}
+              disabled={parts.length > 0}
+              onClick={() => setPoll(poll ? null : { options: ["", ""], durationHours: 24 })}
+              className={cn("grid h-9 w-9 place-items-center rounded-lg text-brand transition-colors hover:bg-brand/10 disabled:opacity-35", poll && "bg-brand/15")}
+            >
+              <BarChart2 className="h-[18px] w-[18px]" />
+            </button>
+            <button
+              type="button"
+              aria-label="Add post to thread"
+              title="Thread"
+              disabled={!!poll || parts.length >= 5 || length === 0}
+              onClick={() => setParts([...parts, ""])}
+              className="grid h-9 w-9 place-items-center rounded-lg text-brand transition-colors hover:bg-brand/10 disabled:opacity-35"
+            >
+              <Plus className="h-[18px] w-[18px]" />
+            </button>
+            </div>
           ) : (
             <span className="text-xs text-muted-foreground">⌘/Ctrl + Enter to send</span>
           )}
@@ -138,7 +228,7 @@ export function ComposerBox({ mode, onDone, autoFocus, inline }: ComposerBoxProp
             <CharRing length={text.length} />
             <Button onClick={submit} disabled={!canPost} className="h-9 rounded-lg px-5 font-bold">
               {busy && <Loader2 className="animate-spin" />}
-              {mode.kind === "reply" ? "Reply" : "Post"}
+              {mode.kind === "reply" ? "Reply" : parts.length ? "Post all" : "Post"}
             </Button>
           </div>
         </div>

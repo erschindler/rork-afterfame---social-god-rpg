@@ -151,3 +151,85 @@ Deno.test("relationship status follows score history", () => {
   assertEquals(statusFor(-5, 40, 1), "former_ally");
   assert(applyDelta(95, 10) <= 100);
 });
+
+// ---------------------------------------------------------------------------
+// Dialogue + DM engines
+// ---------------------------------------------------------------------------
+import { actFromSignals, chooseAct, generateDialogue, nextHeat, quoteBit, sideBetween } from "./dialogue.ts";
+import { classifyDm, dmReply } from "./dm.ts";
+
+const voice = { style: "casual" as const, humor: "dry" as const, traits: neutral };
+
+Deno.test("dialogue: questions get answers", () => {
+  for (let i = 0; i < 20; i++) {
+    const act = chooseAct("ask_followup", "neutral", neutral, 0.4, new Rng(`q${i}`));
+    assertEquals(act, "answer");
+  }
+});
+
+Deno.test("dialogue: opponents counter, allies agree at the root", () => {
+  let counters = 0, agrees = 0;
+  for (let i = 0; i < 200; i++) {
+    const o = chooseAct(null, "opponent", neutral, 0.5, new Rng(`o${i}`));
+    const a = chooseAct(null, "ally", neutral, 0.5, new Rng(`a${i}`));
+    if (["counter", "partial_agree", "evidence_request", "pile_on"].includes(o)) counters++;
+    if (["agree", "agree_extend", "anecdote", "ask_followup", "joke", "tag_friend"].includes(a)) agrees++;
+  }
+  assert(counters > 180);
+  assertEquals(agrees, 200);
+});
+
+Deno.test("dialogue: tag_friend only when a friend is known", () => {
+  for (let i = 0; i < 100; i++) assertNotEquals(chooseAct(null, "ally", { ...neutral, sociability: 1 }, 0.3, new Rng(`t${i}`), { canTag: false }), "tag_friend");
+});
+
+Deno.test("dialogue: replies reference the previous message and avoid repeats", () => {
+  const prev = "Speedrun categories with no glitches are just walking simulators, change my mind";
+  const used: string[] = [];
+  const texts = new Set<string>();
+  for (let i = 0; i < 6; i++) {
+    const line = generateDialogue("rebut", { topic: "speedrunning", prevContent: prev, prevAuthor: "glitchqueen", usedKeys: used }, voice, new Rng(`r${i}`));
+    assert(!used.includes(line.key));
+    used.push(line.key);
+    texts.add(line.text);
+    assert(line.text.length > 0 && line.text.length <= 280);
+  }
+  assertEquals(texts.size, 6);
+  const q = quoteBit(prev, new Rng(1));
+  assert(prev.toLowerCase().includes(q));
+});
+
+Deno.test("dialogue: heat decays and exit ends", () => {
+  assert(nextHeat(0.5, "concede") < 0.2);
+  assertEquals(nextHeat(0.9, "exit"), 0);
+  assert(nextHeat(0.5, "escalate") > 0.5);
+  assertEquals(sideBetween("pro", "con"), "opponent");
+  assertEquals(sideBetween("pro", "pro"), "ally");
+});
+
+Deno.test("dialogue: player signals map to acts", () => {
+  const base = { question: false, aggression: 0, positivity: 0, apology: false, humor: 0, evidence: 0 };
+  assertEquals(actFromSignals({ ...base, question: true }, "what do you think?"), "ask_followup");
+  assertEquals(actFromSignals({ ...base, aggression: 0.8 }, "you're an idiot"), "escalate");
+  assertEquals(actFromSignals({ ...base, apology: true }, "i was wrong"), "concede");
+  assertEquals(actFromSignals(base, "nah that's not true at all"), "counter");
+});
+
+Deno.test("dm: intent classification", () => {
+  assertEquals(classifyDm("hey!"), "greeting");
+  assertEquals(classifyDm("want to collab on a stream?"), "collab_ask");
+  assertEquals(classifyDm("you're a clown"), "hostile");
+  assertEquals(classifyDm("sorry about earlier"), "apology");
+  assertEquals(classifyDm("what game should I play next?"), "question");
+});
+
+Deno.test("dm: big accounts often leave strangers on seen, friends reply", () => {
+  let seen = 0, friendSeen = 0;
+  const base = { intent: "greeting" as const, playerText: "hey", playerUsername: "me", simArchetype: "celebrity", topic: "gaming", voice, historyCount: 1, simGreeted: false };
+  for (let i = 0; i < 100; i++) {
+    if (dmReply({ ...base, relationship: 0, simFame: 80, playerFame: 2 }, new Rng(`s${i}`)).seenOnly) seen++;
+    if (dmReply({ ...base, relationship: 60, simFame: 10, playerFame: 10 }, new Rng(`f${i}`)).seenOnly) friendSeen++;
+  }
+  assert(seen > 40);
+  assertEquals(friendSeen, 0);
+});

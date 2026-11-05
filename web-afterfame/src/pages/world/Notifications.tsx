@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Award, Bell, Flame, Handshake, Hash, Heart, Loader2, MessageCircle, Quote, Repeat2, Sparkles, TrendingUp, UserPlus, Users, Zap } from "lucide-react";
+import { Award, Bell, Flame, Handshake, Hash, Heart, Loader2, Mail, MessageCircle, Quote, Repeat2, ShieldCheck, Sparkles, TrendingUp, UserPlus, Users, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -22,6 +22,9 @@ const ICON: Record<string, { icon: typeof Bell; tone: string }> = {
   quote: { icon: Quote, tone: "text-controversy" },
   mention: { icon: Sparkles, tone: "text-brand" },
   new_follower: { icon: UserPlus, tone: "text-brand" },
+  follow: { icon: UserPlus, tone: "text-brand" },
+  dm: { icon: Mail, tone: "text-brand" },
+  moderation: { icon: ShieldCheck, tone: "text-credibility" },
   achievement: { icon: Award, tone: "text-fame" },
   fame_milestone: { icon: TrendingUp, tone: "text-fame" },
   trend_participation: { icon: Hash, tone: "text-controversy" },
@@ -88,6 +91,8 @@ export default function Notifications() {
 
   const open = (n: NotificationRow) => {
     if (n.source_entity_type === "post" && n.source_entity_id) navigate(`${base}/post/${n.source_entity_id}`);
+    else if (n.source_entity_type === "dm" && n.source_entity_id) navigate(`${base}/messages/${n.source_entity_id}`);
+    else if (n.notification_type === "moderation") navigate(`${base}/settings`);
     else if (n.source_entity_type === "event") navigate(`${base}/events`);
     else if (n.notification_type === "achievement") navigate(`${base}/achievements`);
     else if (n.notification_type === "fame_milestone") navigate(`${base}/fame`);

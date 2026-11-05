@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock, Eye, Globe2, Heart, Info, MessageCircle, Quote, Repeat2, TrendingUp, Users } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { Avatar } from "@/components/Avatar";
@@ -13,6 +13,7 @@ import { EmptyState, ErrorState, FeedSkeleton } from "@/components/States";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { callFn } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import { compact, fullDate } from "@/lib/format";
 import type { PostView, SpreadRow, ThreadResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -112,16 +113,64 @@ function AuthorPanel({ post }: { post: PostView }) {
   );
 }
 
+/** A reply with its nested conversation; long branches collapse. */
+function ReplyNode({ post, depth }: { post: PostView; depth: number }) {
+  const kids = post.children ?? [];
+  const [expanded, setExpanded] = useState<boolean>(false);
+  const visible = expanded ? kids : kids.slice(0, depth === 0 ? 3 : 2);
+  const hidden = kids.length - visible.length;
+  return (
+    <div>
+      <PostCard post={post} showThreadLine={kids.length > 0} />
+      {kids.length > 0 && (
+        <div className={cn("relative", depth < 2 ? "ml-[37px] border-l-2 border-border/70" : "ml-0")}>
+          {visible.map((k) => (
+            <ReplyNode key={k.id} post={k} depth={depth + 1} />
+          ))}
+          {hidden > 0 && (
+            <button type="button" onClick={() => setExpanded(true)} className="w-full border-b border-border px-4 py-3 text-left text-sm font-semibold text-brand hover:bg-surface/80">
+              Show {hidden} more {hidden === 1 ? "reply" : "replies"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Thread() {
   const { postId = "" } = useParams();
   const { worldId } = useWorld();
   const [sort, setSort] = useState<"relevant" | "recent">("relevant");
+  const queryClient = useQueryClient();
   const q = useQuery({
     queryKey: ["thread", worldId, postId, sort],
     queryFn: () => callFn<ThreadResponse>("feed", { action: "thread", worldId, postId, sort }),
-    refetchInterval: 20_000,
+    refetchInterval: 8_000,
+    refetchIntervalInBackground: false,
   });
   const data = q.data;
+  const rootId = data ? (data.ancestors[0]?.id ?? data.post.id) : null;
+
+  // Live: new replies anywhere in this conversation refresh the tree.
+  useEffect(() => {
+    if (!rootId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const channel = supabase
+      .channel(`thread-${rootId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts", filter: `root_post_id=eq.${rootId}` }, () => {
+        if (timer) return;
+        timer = setTimeout(() => {
+          timer = null;
+          queryClient.invalidateQueries({ queryKey: ["thread", worldId, postId] });
+        }, 600);
+      })
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
+  }, [rootId, worldId, postId, queryClient]);
 
   useRailOverride(
     data ? (
@@ -156,7 +205,7 @@ export default function Thread() {
             <SpreadPanel spread={data.spread} comparison={data.comparison} post={data.post} />
           </div>
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="font-bold">Replies ({data.replies.length})</h2>
+            <h2 className="font-bold">Replies ({data.replyTotal ?? data.replies.length})</h2>
             <Select value={sort} onValueChange={(v) => setSort(v as "relevant" | "recent")}>
               <SelectTrigger className="h-8 w-auto gap-2 border-none bg-transparent text-sm text-muted-foreground" aria-label="Sort replies">
                 <SelectValue />
@@ -170,7 +219,7 @@ export default function Thread() {
           {data.replies.length === 0 ? (
             <EmptyState title="No replies yet" body={data.post.author.is_self ? "People may still respond — reactions arrive over time." : "Be the first to reply."} />
           ) : (
-            data.replies.map((r) => <PostCard key={r.id} post={r} />)
+            data.replies.map((r) => <ReplyNode key={r.id} post={r} depth={0} />)
           )}
           {data.quotes.length > 0 && (
             <>

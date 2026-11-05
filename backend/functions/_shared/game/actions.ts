@@ -11,6 +11,9 @@ import { scheduleJob, startPlayerFeud } from "./distribute.ts";
 import { evaluateAchievements } from "./achievements.ts";
 import { progressChallenge } from "./challenges.ts";
 import { voiceOf } from "./util.ts";
+import { actFromSignals, chooseAct, generateDialogue, nextHeat, type Side } from "../sim/dialogue.ts";
+import { isClosed, type Poll } from "../sim/polls.ts";
+import { scheduleConversation } from "./conversation.ts";
 
 async function enforceRateLimit(db: Db, player: PlayerRow): Promise<void> {
   const tenMin = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -37,6 +40,24 @@ export interface CreatePostInput {
   topic?: string | null;
   parentId?: string | null;
   quotedId?: string | null;
+  poll?: { options: string[]; durationHours: number } | null;
+  /** Continuation of the player's own multi-post thread. */
+  threadPosition?: number | null;
+  /** Skip distribution (later parts of a thread ride on the first post). */
+  skipDistribution?: boolean;
+  skipRateLimit?: boolean;
+}
+
+export function validatePoll(raw: unknown): { options: string[]; durationHours: number } | null {
+  if (raw == null) return null;
+  const r = raw as { options?: unknown; durationHours?: unknown };
+  if (!Array.isArray(r.options)) throw new HttpError(400, "Poll options are missing.", "invalid_input");
+  const options = r.options.map((o) => (typeof o === "string" ? o.trim() : "")).filter(Boolean);
+  if (options.length < 2 || options.length > 4) throw new HttpError(400, "Polls need 2 to 4 options.", "invalid_input");
+  if (options.some((o) => o.length > 40)) throw new HttpError(400, "Poll options are limited to 40 characters.", "invalid_input");
+  if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) throw new HttpError(400, "Poll options must be different.", "invalid_input");
+  const d = Number(r.durationHours);
+  return { options, durationHours: [1, 6, 24].includes(d) ? d : 24 };
 }
 
 /**
@@ -47,7 +68,7 @@ export async function createPlayerPost(db: Db, world: WorldRow, player: PlayerRo
   const content = input.content.replace(/\s+$/g, "").replace(/^\s+/g, "");
   if (content.length < 1) throw new HttpError(400, "Write something first.", "invalid_input");
   if (content.length > LIMITS.maxPostLength) throw new HttpError(400, `Posts are limited to ${LIMITS.maxPostLength} characters.`, "invalid_input");
-  await enforceRateLimit(db, player);
+  if (!input.skipRateLimit) await enforceRateLimit(db, player);
 
   let parent: PostRow | null = null;
   let quoted: PostRow | null = null;
@@ -60,7 +81,8 @@ export async function createPlayerPost(db: Db, world: WorldRow, player: PlayerRo
   const post = check(await db.from("posts").insert({
     world_id: world.id, author_type: "player", author_player_id: player.id, post_type: input.kind, content, topic_id: signals.topic,
     parent_post_id: parent?.id ?? null, root_post_id: parent ? (parent.root_post_id ?? parent.id) : null, quoted_post_id: quoted?.id ?? null,
-    signals, sim_tick: world.current_tick,
+    signals, sim_tick: world.current_tick, thread_position: input.threadPosition ?? null,
+    poll: input.poll ? { options: input.poll.options, counts: input.poll.options.map(() => 0), closes_at: new Date(Date.now() + input.poll.durationHours * 3_600_000).toISOString() } : null,
   }).select("*").single(), "insert_player_post") as PostRow;
 
   // Posting fatigue: frequent and repetitive posting reduces efficiency.
@@ -77,7 +99,9 @@ export async function createPlayerPost(db: Db, world: WorldRow, player: PlayerRo
 
   // Direct effects on the account you replied to / quoted
   const target = parent ?? quoted;
-  if (target?.author_type === "sim" && target.author_simulated_account_id) {
+  if (input.threadPosition) {
+    // Own thread continuation: no reaction effects.
+  } else if (target?.author_type === "sim" && target.author_simulated_account_id) {
     if (parent) check(await db.rpc("adjust_post_counts", { p: parent.id, d_like: 0, d_reply: 1, d_repost: 0, d_quote: 0, d_view: 0 }), "inc_reply");
     if (quoted) check(await db.rpc("adjust_post_counts", { p: quoted.id, d_like: 0, d_reply: 0, d_repost: 0, d_quote: 1, d_view: 0 }), "inc_quote");
     await reactToPlayerResponse(db, world, fresh, post, target, signals.aggression > 0.3, content.length >= 60 && signals.aggression < 0.2);
@@ -109,7 +133,7 @@ export async function createPlayerPost(db: Db, world: WorldRow, player: PlayerRo
   }
 
   // Stage 1 is queued as a job; the caller kicks it off in the background.
-  await scheduleJob(db, world.id, "distribute_post", { post_id: post.id, stage: 1 }, new Date(), `dist:${post.id}:1`);
+  if (!input.skipDistribution) await scheduleJob(db, world.id, "distribute_post", { post_id: post.id, stage: 1 }, new Date(), `dist:${post.id}:1`);
   await evaluateAchievements(db, world, fresh, { sourcePostId: post.id });
   return { post };
 }
@@ -128,7 +152,8 @@ async function reactToPlayerResponse(db: Db, world: WorldRow, player: PlayerRow,
   const t = sim.personality_traits;
   const pBack = clamp(0.12 + t.sociability * 0.35 + Math.abs(rel.score) / 200 + (hostile ? t.conflict_tolerance * 0.3 : 0) - sim.fame / 250 + player.fame / 300, 0.05, 0.85);
   if (rng.chance(pBack)) {
-    const delay = TICK_SECONDS[world.world_pace] * rng.range(0.1, 0.5) * 1000;
+    // People answer within seconds to a couple of minutes, like a live app.
+    const delay = rng.range(15_000, 120_000) * (sim.fame > 50 ? 1.6 : 1);
     await scheduleJob(db, world.id, "sim_reply_back", { sim_id: sim.id, player_post_id: playerPost.id, hostile, score: rel.score }, new Date(Date.now() + delay), `replyback:${playerPost.id}`);
   }
   if (hostile && rel.score <= -15) {
@@ -145,14 +170,62 @@ export async function simReplyBack(db: Db, world: WorldRow, payload: { sim_id: s
   if (!sim || !post || post.deleted_at) return;
   const player = check(await db.from("player_world_state").select("*").eq("id", post.author_player_id).single(), "load_rb_player") as PlayerRow;
   const rng = new Rng(`${world.seed}:rbtext:${post.id}`);
-  const stance = payload.hostile ? (sim.personality_traits.warmth > 0.6 ? "disagree" : "dunk") : payload.score > 15 ? "praise" : rng.pick(["agree_add", "question", "joke", "relate"] as const);
-  const content = generateReply(stance, { topic: post.topic_id ?? sim.interests[0], hook: extractHook(post.content) }, voiceOf(sim), rng);
-  check(await db.from("posts").insert({
+  const sig = post.signals as unknown as { question: boolean; aggression: number; positivity: number; apology: boolean; humor: number; evidence: number; controversy?: number };
+  const prevAct = actFromSignals({ question: !!sig.question, aggression: Number(sig.aggression ?? 0), positivity: Number(sig.positivity ?? 0), apology: !!sig.apology, humor: Number(sig.humor ?? 0), evidence: Number(sig.evidence ?? 0) }, post.content);
+  const side: Side = payload.hostile || payload.score <= -15 || prevAct === "counter" || prevAct === "escalate" ? "opponent" : payload.score >= 10 || prevAct === "agree" || prevAct === "agree_extend" ? "ally" : "neutral";
+  const heat = payload.hostile ? 0.75 : side === "opponent" ? 0.55 : 0.35;
+  const act = chooseAct(prevAct, side, sim.personality_traits, heat, rng, { prevIsQuestion: post.content.includes("?"), turn: 1 });
+  const root = post.root_post_id ? check(await db.from("posts").select("id, author_type, author_simulated_account_id, author_player_id").eq("id", post.root_post_id).maybeSingle(), "rb_root") as { id: string; author_simulated_account_id: string | null } | null : null;
+  const opName = root?.author_simulated_account_id === sim.id ? sim.username : player.username;
+  const line = generateDialogue(act, { topic: post.topic_id ?? sim.interests[0], prevContent: post.content, prevAuthor: player.username, opAuthor: opName }, voiceOf(sim), rng);
+  const reply = check(await db.from("posts").insert({
     world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "reply", parent_post_id: post.id, root_post_id: post.root_post_id ?? post.id,
-    content, topic_id: post.topic_id, stance, sim_tick: world.current_tick,
-  }), "insert_reply_back");
+    content: line.text, topic_id: post.topic_id, stance: act, sim_tick: world.current_tick, like_count: rng.int(0, 6),
+  }).select("id").single(), "insert_reply_back") as { id: string };
   check(await db.rpc("adjust_post_counts", { p: post.id, d_like: 0, d_reply: 1, d_repost: 0, d_quote: 0, d_view: 0 }), "inc_reply_back");
-  await notify(db, world.id, player.user_id, { type: "reply", title: `@${sim.username} replied to you`, body: content, sourceType: "post", sourceId: post.id, actorId: sim.id, priority: 2 });
+  await notify(db, world.id, player.user_id, { type: "reply", title: `@${sim.username} replied to you`, body: line.text, sourceType: "post", sourceId: post.root_post_id ?? post.id, actorId: sim.id, priority: 2 });
+  // Onlookers sometimes join the exchange.
+  if (act !== "exit" && rng.chance(0.4)) {
+    const simTeam = side === "opponent" ? "con" : "pro";
+    await scheduleConversation(db, world, {
+      rootId: post.root_post_id ?? post.id, parentId: reply.id, lastAct: act, heat: nextHeat(heat, act), rng: rng.fork("conv"),
+      participants: [{ id: player.id, username: player.username, team: "pro", player: true }, { id: sim.id, username: sim.username, team: simTeam }],
+    });
+  }
+}
+
+/** Publish a multi-post thread: the first post is distributed, the rest chain under it. */
+export async function createThread(db: Db, world: WorldRow, player: PlayerRow, contents: string[], topic: string | null): Promise<{ postIds: string[] }> {
+  const parts = contents.map((c) => c.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 6) throw new HttpError(400, "Threads have 2 to 6 posts.", "invalid_input");
+  if (parts.some((p) => p.length > LIMITS.maxPostLength)) throw new HttpError(400, `Each post is limited to ${LIMITS.maxPostLength} characters.`, "invalid_input");
+  const first = await createPlayerPost(db, world, player, { kind: "post", content: parts[0], topic, threadPosition: null });
+  check(await db.from("posts").update({ thread_position: 1 }).eq("id", first.post.id), "thread_first");
+  const ids = [first.post.id];
+  let parent = first.post.id;
+  for (let i = 1; i < parts.length; i++) {
+    const res = await createPlayerPost(db, world, player, { kind: "reply", content: parts[i], topic: first.post.topic_id, parentId: parent, threadPosition: i + 1, skipDistribution: true, skipRateLimit: true });
+    ids.push(res.post.id);
+    parent = res.post.id;
+  }
+  return { postIds: ids };
+}
+
+/** Player votes in a poll (one vote, cannot change, closed polls rejected). */
+export async function votePoll(db: Db, world: WorldRow, player: PlayerRow, postId: string, option: number): Promise<{ poll: Poll; vote: number }> {
+  const post = await loadPost(db, world.id, postId);
+  const poll = post.poll as Poll | null | undefined;
+  if (!poll) throw new HttpError(400, "That post has no poll.", "invalid_action");
+  if (isClosed(poll)) throw new HttpError(409, "This poll has closed.", "poll_closed");
+  if (!Number.isInteger(option) || option < 0 || option >= poll.options.length) throw new HttpError(400, "Invalid option.", "invalid_input");
+  if (post.author_player_id === player.id) throw new HttpError(400, "You can't vote in your own poll.", "invalid_action");
+  const ins = await db.from("poll_votes").insert({ world_id: world.id, post_id: post.id, player_id: player.id, option_index: option });
+  if (ins.error?.code === "23505") throw new HttpError(409, "You already voted.", "already_voted");
+  check(ins, "insert_vote");
+  const fresh = check(await db.from("posts").select("poll").eq("id", post.id).single(), "reload_vote_poll") as { poll: Poll };
+  const next: Poll = { ...fresh.poll, counts: fresh.poll.counts.map((c, i) => c + (i === option ? 1 : 0)) };
+  check(await db.from("posts").update({ poll: next }).eq("id", post.id), "update_vote_poll");
+  return { poll: next, vote: option };
 }
 
 export async function setInteraction(db: Db, world: WorldRow, player: PlayerRow, postId: string, type: "like" | "repost" | "bookmark", on: boolean): Promise<{ active: boolean }> {
@@ -189,7 +262,7 @@ export async function setInteraction(db: Db, world: WorldRow, player: PlayerRow,
 
 export async function setFollow(db: Db, world: WorldRow, player: PlayerRow, simId: string, on: boolean): Promise<{ following: boolean; followedBack: boolean }> {
   const sim = await loadSim(db, world.id, simId);
-  if (!sim) throw new HttpError(404, "Account not found.", "not_found");
+  if (!sim) return await setPlayerFollow(db, world, player, simId, on);
   let followedBack = false;
   if (on) {
     const blocked = check(await db.from("player_filters").select("id").eq("player_id", player.id).eq("target_simulated_account_id", sim.id).eq("kind", "block").maybeSingle(), "check_block");
@@ -222,6 +295,24 @@ export async function setFollow(db: Db, world: WorldRow, player: PlayerRow, simI
   const fresh = check(await db.from("player_world_state").select("*").eq("id", player.id).single(), "reload_after_follow") as PlayerRow;
   await evaluateAchievements(db, world, fresh, {});
   return { following: on, followedBack };
+}
+
+/** Following another real player in a shared world. */
+async function setPlayerFollow(db: Db, world: WorldRow, player: PlayerRow, targetId: string, on: boolean): Promise<{ following: boolean; followedBack: boolean }> {
+  const target = check(await db.from("player_world_state").select("id, user_id, username").eq("world_id", world.id).eq("id", targetId).maybeSingle(), "load_target_player") as { id: string; user_id: string; username: string } | null;
+  if (!target) throw new HttpError(404, "Account not found.", "not_found");
+  if (target.id === player.id) throw new HttpError(400, "You can't follow yourself.", "invalid_action");
+  if (on) {
+    const res = await db.from("follows").insert({ world_id: world.id, follower_type: "player", follower_player_id: player.id, followed_type: "player", followed_player_id: target.id, reason: "player" });
+    if (res.error && res.error.code !== "23505") check(res, "insert_player_follow");
+    if (!res.error) await notify(db, world.id, target.user_id, { type: "new_follower", title: `@${player.username} followed you`, body: "Another player in this world.", sourceType: "player", sourceId: player.id, priority: 2 });
+  } else {
+    check(await db.from("follows").delete().eq("follower_player_id", player.id).eq("followed_player_id", target.id), "delete_player_follow");
+  }
+  await refreshPlayerCounts(db, player.id);
+  await refreshPlayerCounts(db, target.id);
+  const back = check(await db.from("follows").select("id").eq("follower_player_id", target.id).eq("followed_player_id", player.id).maybeSingle(), "player_followback");
+  return { following: on, followedBack: !!back };
 }
 
 export async function setFilter(db: Db, world: WorldRow, player: PlayerRow, simId: string, kind: "mute" | "block", on: boolean): Promise<void> {

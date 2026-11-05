@@ -16,6 +16,10 @@ import { simReplyBack } from "./actions.ts";
 import { evaluateAchievements } from "./achievements.ts";
 import { ensureChallenges } from "./challenges.ts";
 import { abstractEngagement, voiceOf } from "./util.ts";
+import { type ConversePayload, runConverse, startTickConversations } from "./conversation.ts";
+import { processDmReply, simInitiatedDms } from "./dm.ts";
+import { reviewReport } from "./moderation.ts";
+import { distributeVotes, optionWeights, type Poll, simPoll } from "../sim/polls.ts";
 
 export interface SyncResult {
   ticks: number;
@@ -67,6 +71,9 @@ export async function processDueJobs(db: Db, world: WorldRow): Promise<number> {
     try {
       if (job.job_type === "distribute_post") await processDistribution(db, world, String(job.payload.post_id), Number(job.payload.stage));
       else if (job.job_type === "sim_reply_back") await simReplyBack(db, world, job.payload as { sim_id: string; player_post_id: string; hostile: boolean; score: number });
+      else if (job.job_type === "converse") await runConverse(db, world, job.payload as unknown as ConversePayload);
+      else if (job.job_type === "dm_reply") await processDmReply(db, world, job.payload as { thread_id: string; message_id: string }, false);
+      else if (job.job_type === "review_report") await reviewReport(db, world, String(job.payload.report_id));
       check(await db.from("simulation_jobs").update({ status: "completed", completed_at: new Date().toISOString(), last_error: null }).eq("id", job.id), "complete_job");
       done++;
     } catch (err) {
@@ -132,6 +139,13 @@ export async function simulateTick(db: Db, world: WorldRow): Promise<Record<stri
       const topic = trend?.topic_id ?? r.pick(sim.interests);
       const eng = abstractEngagement(sim.follower_count_cache, 0.4 + r.next() * 0.4, () => r.next());
       if (trend) trendLinks.push({ idx: rows.length, trendId: trend.id });
+      if (intent === "question" && r.chance(0.35)) {
+        const sp = simPoll(topic, r);
+        const key = `${world.id}:${world.current_tick}:${sim.id}`;
+        const poll: Poll = { options: sp.options, counts: distributeVotes(optionWeights(key, sp.options.length), Math.min(400, Math.round(eng.views * 0.12)), r), closes_at: new Date(Date.now() + (r.chance(0.5) ? 6 : 24) * 3_600_000).toISOString() };
+        rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "post", content: sp.question, topic_id: topic, stance: "poll", poll, sim_tick: world.current_tick, like_count: Math.round(eng.likes * 0.6), reply_count: 0, repost_count: eng.reposts, view_count: eng.views, signals: { poll_key: key } });
+        continue;
+      }
       rows.push({ world_id: world.id, author_type: "sim", author_simulated_account_id: sim.id, post_type: "post", content: generatePost(intent, { topic, tag: trend?.name }, voiceOf(sim), r), topic_id: topic, stance: intent, sim_tick: world.current_tick, like_count: eng.likes, reply_count: 0, repost_count: eng.reposts, view_count: eng.views });
     }
   }
@@ -142,9 +156,14 @@ export async function simulateTick(db: Db, world: WorldRow): Promise<Record<stri
     for (const id of replyBumps) await db.rpc("adjust_post_counts", { p: id, d_like: 0, d_reply: 1, d_repost: 0, d_quote: 0, d_view: 0 });
   }
 
+  // 1b. Reply threads come alive; open polls keep collecting votes.
+  stats.conversations = await startTickConversations(db, world, slice, rng.fork("conv"));
+  await bumpPolls(db, world, rng.fork("polls"));
+
   // 2. The world reacts to players who have earned attention
   for (const player of await loadPlayers(db, world.id)) {
     await playerDirectedActivity(db, world, player, rng.fork(`p${player.id}`));
+    stats.dms = (stats.dms ?? 0) + await simInitiatedDms(db, world, player, rng.fork(`dm${player.id}`));
   }
 
   // 3. Independent emergent events
@@ -153,6 +172,19 @@ export async function simulateTick(db: Db, world: WorldRow): Promise<Record<stri
   // 4. Trends lifecycle + new trend detection
   stats.trends = await updateTrends(db, world, rng.fork("trends"));
   return stats;
+}
+
+/** Open SIM polls keep gathering abstract votes until they close. */
+async function bumpPolls(db: Db, world: WorldRow, rng: Rng): Promise<void> {
+  const open = check(await db.from("posts").select("id, poll, view_count, signals").eq("world_id", world.id).eq("author_type", "sim").not("poll", "is", null).is("deleted_at", null)
+    .gte("created_at", new Date(Date.now() - 26 * 3_600_000).toISOString()).order("created_at", { ascending: false }).limit(8), "open_polls") as { id: string; poll: Poll; view_count: number; signals: Record<string, unknown> }[];
+  for (const p of open) {
+    if (Date.parse(p.poll.closes_at) <= Date.now()) continue;
+    const add = rng.int(1, Math.max(2, Math.round(p.view_count * 0.03)));
+    const extra = distributeVotes(optionWeights(String(p.signals?.poll_key ?? p.id), p.poll.options.length), Math.min(add, 120), rng);
+    const poll: Poll = { ...p.poll, counts: p.poll.counts.map((c, i) => c + (extra[i] ?? 0)) };
+    check(await db.from("posts").update({ poll, view_count: p.view_count + add * 3 }).eq("id", p.id), "bump_poll");
+  }
 }
 
 async function playerDirectedActivity(db: Db, world: WorldRow, player: PlayerRow, rng: Rng): Promise<void> {

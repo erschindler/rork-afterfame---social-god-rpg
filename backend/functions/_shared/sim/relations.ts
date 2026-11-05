@@ -30,6 +30,10 @@ export const INTERACTION_DELTA: Record<string, number> = {
   collab: 15,
   collab_declined: -3,
   apology: 6,
+  /** Direct messages: multiplied by the exchange's relDelta. */
+  dm: 1,
+  sponsor_accepted: 3,
+  sponsor_declined: -1,
 };
 
 export function applyDelta(score: number, delta: number): number {

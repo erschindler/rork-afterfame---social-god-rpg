@@ -47,7 +47,7 @@ backend/
 ## Setup (new Supabase project)
 
 1. Create a Supabase project. Under **Auth → Providers**, enable Email. Configure SMTP for real users; the built-in mailer is heavily rate-limited.
-2. **Migrations.** Run the files in `backend/migrations/` in numeric order (001 → 006), either in the SQL editor or with `psql`. Before running `006`, edit the function URL inside it to match your project ref.
+2. **Migrations.** Run the files in `backend/migrations/` in numeric order (001 → 007), either in the SQL editor or with `psql`. Before running `006`, edit the function URL inside it to match your project ref.
 3. **Deploy functions.**
    ```bash
    supabase functions deploy world --no-verify-jwt
@@ -70,7 +70,7 @@ backend/
 ## Testing
 
 ```bash
-cd backend/functions && deno test _shared/sim/          # 14 engine unit tests
+cd backend/functions && deno test _shared/sim/          # 22 engine unit tests
 deno run backend/scripts/calibrate.ts                    # engagement-rate calibration table
 OWNER_TOKEN=<jwt> WORLD_ID=<uuid> backend/scripts/security-check.sh   # 17 authorization checks
 ```
@@ -90,10 +90,14 @@ The engine tests cover: determinism, population consistency, zero-engagement pos
 - **Events and trends.** World events (player-driven and independent), event responses (apologize, stand firm, clarify, ignore), collaboration invites, emergent hashtag trends, and player-started trends.
 - **Achievements and challenges.** 16 server-validated achievements. Daily challenges with forgiving streaks.
 - **Notifications and time.** Notifications with batching and realtime toasts. Offline “While you were away” summaries built only from recorded events. Background simulation through cron.
+- **Living conversations.** SIMs argue, agree, joke and pile on in multi-turn reply chains (dialogue acts stored per post), with nested thread views that update live.
+- **Direct messages.** Inbox with Primary / Requests, typing indicators, read receipts, SIM replies in character, and brand deal offers you can accept or decline.
+- **Polls and threads.** 2–4 option polls (1, 6 or 24 hours) that SIMs vote on, and multi-post threads of up to 6 parts.
+- **Shared worlds.** Up to 8 players per world via invite links or codes; hosts can regenerate or turn off the link; members can leave.
+- **Moderation review.** Reports are reviewed by the simulation within minutes and the reporter is notified. Real players are never auto-punished.
+- **Live pulse.** Online players, active accounts, typing SIMs and a "new posts" pill on the home feed.
 - **Interface.** Dark (default) and light themes, a responsive desktop three-column layout, and mobile bottom navigation.
 
 **Deferred**
-- Shared worlds and private circles. The schema, membership tables and RLS (`is_world_member`) are in place; the UI shows them as “not open yet” and the server rejects them.
-- Private messages.
-- Image attachments, polls and multi-post threads.
-- Moderation review dashboard. Reports are stored in `moderation_reports`.
+- Image attachments.
+- Private circles (invite-only worlds without a public code).

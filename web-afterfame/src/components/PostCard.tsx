@@ -1,10 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Bookmark, Flame, Heart, MessageCircle, MoreHorizontal, Pin, Quote, Repeat2, Trash2, UserRound, VolumeX, Ban, Flag } from "lucide-react";
+import { BarChart3, Bookmark, Flame, Heart, Mail, MessageCircle, MoreHorizontal, Pin, Quote, Repeat2, Trash2, UserRound, VolumeX, Ban, Flag } from "lucide-react";
 import { memo, useEffect, useState, type MouseEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Avatar } from "@/components/Avatar";
+import { PollCard } from "@/components/PollCard";
 import { RichText } from "@/components/RichText";
 import { SimBadge } from "@/components/SimBadge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -228,6 +229,9 @@ export const PostCard = memo(function PostCard({ post, focus, showThreadLine }: 
                 </>
               ) : post.author.is_simulated ? (
                 <>
+                  <DropdownMenuItem onSelect={() => navigate(`${base}/messages/@${post.author.id}`)}>
+                    <Mail /> Message @{post.author.username}
+                  </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => moderate("mute")}>
                     <VolumeX /> Mute @{post.author.username}
                   </DropdownMenuItem>
@@ -247,12 +251,15 @@ export const PostCard = memo(function PostCard({ post, focus, showThreadLine }: 
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {post.parent && !focus && (
+        {post.thread_position && post.thread_position > 1 && !focus ? (
+          <p className="text-[13px] font-medium text-muted-foreground">Thread · part {post.thread_position}</p>
+        ) : post.parent && !focus && (
           <p className="text-[13px] text-muted-foreground">
             Replying to <span className="text-brand">@{post.parent.username}</span>
           </p>
         )}
         <RichText text={post.content} className={cn("mt-0.5 whitespace-pre-wrap break-words leading-[1.42]", focus ? "text-[21px] leading-snug" : "text-[15.5px]")} />
+        {post.poll && <PollCard postId={post.id} poll={post.poll} />}
         {post.quoted && <QuotedPost post={post.quoted} />}
         {own && player && post.spread_stage !== "none" && !focus && (
           <p className="mt-1.5 text-[12px] font-medium text-muted-foreground">
